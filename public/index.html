@@ -79,26 +79,45 @@ input[readonly]:focus { border-color: var(--line); }
 .chip.amber { background: #fffbeb; color: #b45309; }
 .muted { color: var(--muted); font-size: 0.85rem; }
 .small { font-size: 0.78rem; }
-.expense {
-  padding: 12px 0; border-top: 1px solid var(--line);
-  display: grid; grid-template-columns: 1fr auto; gap: 4px 8px;
+.date-tabs {
+  display: flex; gap: 8px; overflow-x: auto; -webkit-overflow-scrolling: touch;
+  padding: 4px 2px 10px; margin: 0 -2px 4px; scrollbar-width: none;
 }
-.expense:first-of-type { border-top: none; }
-.day-group { margin-top: 14px; }
-.day-group:first-child { margin-top: 4px; }
+.date-tabs::-webkit-scrollbar { display: none; }
+.date-tab {
+  flex: 0 0 auto; padding: 8px 14px; border-radius: 999px; font-weight: 600; font-size: 0.85rem;
+  background: #f0fdfa; color: var(--muted); border: 1.5px solid transparent; white-space: nowrap;
+}
+.date-tab.on { background: var(--accent); color: #fff; }
+.day-group { margin-top: 18px; }
+.day-group:first-child { margin-top: 6px; }
 .day-head {
-  display: flex; justify-content: space-between; align-items: baseline;
-  padding: 6px 0 4px; font-weight: 700; font-size: 0.9rem;
-  border-bottom: 1.5px solid var(--line); margin-bottom: 2px;
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 8px 12px; font-weight: 700; font-size: 0.88rem;
+  background: #d1fae5; color: #065f46; border-radius: 12px;
+  position: sticky; top: 0; z-index: 2;
 }
-.day-head .sub { font-weight: 600; color: var(--muted); font-size: 0.78rem; }
-.day-group .expense:first-of-type { border-top: none; }
-.expense .title { font-weight: 600; }
-.expense .meta { color: var(--muted); font-size: 0.78rem; }
-.expense .amt { font-weight: 700; text-align: right; white-space: nowrap; }
-.expense .acts { display: flex; gap: 6px; justify-content: flex-end; }
+.day-head .sub { font-weight: 600; color: #047857; font-size: 0.78rem; }
+.day-person {
+  margin: 8px 2px 4px; padding: 8px 10px; border-radius: 10px; background: #f8fffe;
+  font-size: 0.78rem; color: var(--muted); line-height: 1.45;
+}
+.day-person strong { color: var(--ink); font-weight: 600; }
+.expense-list { margin-top: 6px; }
+.expense {
+  padding: 10px 4px; display: grid; grid-template-columns: 1fr auto; gap: 2px 10px;
+  align-items: center; border-top: none;
+}
+.expense + .expense { border-top: 1px solid var(--line); }
+.expense .title { font-weight: 600; font-size: 0.95rem; }
+.expense .meta { color: var(--muted); font-size: 0.75rem; margin-top: 2px; }
+.expense .amt { font-weight: 700; text-align: right; white-space: nowrap; font-size: 0.95rem; }
+.expense .acts {
+  display: inline-flex; gap: 4px; justify-content: flex-end; align-items: center; margin-top: 2px;
+}
 .expense .acts button {
-  font-size: 0.75rem; padding: 4px 8px; border-radius: 8px; background: #f0fdfa; color: var(--accent);
+  font-size: 0.72rem; padding: 3px 8px; border-radius: 8px; background: #f0fdfa; color: var(--accent);
+  min-height: 28px;
 }
 .expense .acts button.del { color: var(--danger); background: #fef2f2; }
 .member-pill {
@@ -223,6 +242,7 @@ let state = {
   sync: 'off', // on | off | pending
   editingExpenseId: null,
   recentCodes: [],
+  expenseDateFilter: 'all', // 'all' | YYYY-MM-DD
 };
 /** Names staged on the home create form (not yet a trip). */
 let homeDraftMembers = [];
@@ -344,6 +364,40 @@ function memberName(id) {
   const m = (state.trip?.members || []).find(x => x.id === id);
   return m ? m.name : '?';
 }
+
+function expenseTitle(e) {
+  const t = (e?.title || '').trim();
+  if (t) return t;
+  const payer = memberName(e?.payerId) || '成員';
+  return `${payer} 付的支出`;
+}
+function dayPersonSpend(items, trip) {
+  const paid = {};
+  const share = {};
+  (trip.members || []).forEach(m => { paid[m.id] = 0; share[m.id] = 0; });
+  items.forEach(exp => {
+    const homeAmt = toHome(exp.amount, exp.currency, trip);
+    if (exp.payerId) paid[exp.payerId] = (paid[exp.payerId] || 0) + homeAmt;
+    const shares = exp.shares || [];
+    if (!shares.length) return;
+    if (exp.splitType === 'custom') {
+      shares.forEach(s => {
+        share[s.memberId] = (share[s.memberId] || 0) + toHome(Number(s.amount) || 0, exp.currency, trip);
+      });
+    } else {
+      const each = homeAmt / shares.length;
+      shares.forEach(s => { share[s.memberId] = (share[s.memberId] || 0) + each; });
+    }
+  });
+  const home = trip.homeCurrency;
+  return (trip.members || []).map(m => {
+    const p = roundMoney(paid[m.id] || 0, home);
+    const s = roundMoney(share[m.id] || 0, home);
+    if (Math.abs(p) < 0.005 && Math.abs(s) < 0.005) return null;
+    return `${escapeHtml(m.name)}：付 ${money(p, home)} · 分攤 ${money(s, home)}`;
+  }).filter(Boolean);
+}
+
 
 function parseHash() {
   const h = location.hash.replace(/^#/, '');
@@ -525,6 +579,7 @@ async function joinTrip(code) {
     }
   }
   state.view = 'trip';
+  state.expenseDateFilter = 'all';
   rememberCode(code);
   location.hash = 't/' + code;
   connectSSE(code);
@@ -771,29 +826,50 @@ function renderTrip() {
         (byDate[d] = byDate[d] || []).push(e);
       });
       const days = Object.keys(byDate).sort((a, b) => b.localeCompare(a));
-      return days.map(day => {
+      const filter = state.expenseDateFilter;
+      const active = (filter && filter !== 'all' && byDate[filter]) ? filter : 'all';
+      if (filter !== active) state.expenseDateFilter = active;
+      const tabLabel = (ymd) => {
+        const [y, m, d] = ymd.split('-').map(Number);
+        const week = ['日','一','二','三','四','五','六'];
+        const w = week[new Date(Date.UTC(y, m - 1, d, 12)).getUTCDay()];
+        return `${m}/${d}（${w}）`;
+      };
+      const tabs = `<div class="date-tabs" id="date-tabs">
+        <button type="button" class="date-tab ${active==='all'?'on':''}" data-date-tab="all">全部</button>
+        ${days.map(d => `<button type="button" class="date-tab ${active===d?'on':''}" data-date-tab="${d}">${tabLabel(d)}</button>`).join('')}
+      </div>`;
+      const showDays = active === 'all' ? days : [active];
+      const groups = showDays.map(day => {
         const items = byDate[day].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
         const dayHome = items.reduce((s, e) => s + toHome(e.amount, e.currency, t), 0);
+        const personLines = dayPersonSpend(items, t);
+        const detail = active !== 'all'
+          ? `<div class="day-person">${personLines.map(l => `<div>${l}</div>`).join('') || '<div>尚無分攤</div>'}</div>`
+          : '';
         const rows = items.map(e => {
           const sharers = (e.shares||[]).map(s => memberName(s.memberId)).join('、');
           return `<div class="expense" data-exp="${e.id}">
             <div>
-              <div class="title">${escapeHtml(e.title || '支出')}</div>
+              <div class="title">${escapeHtml(expenseTitle(e))}</div>
               <div class="meta">${escapeHtml(memberName(e.payerId))} 付 · ${e.splitType==='custom'?'自訂':'平均'}分給 ${escapeHtml(sharers||'—')}</div>
             </div>
-            <div class="amt">${money(e.amount, e.currency)}</div>
-            <div></div>
-            <div class="acts">
-              <button data-edit-exp="${e.id}">編輯</button>
-              <button class="del" data-del-exp="${e.id}">刪除</button>
+            <div style="text-align:right">
+              <div class="amt">${money(e.amount, e.currency)}</div>
+              <div class="acts">
+                <button data-edit-exp="${e.id}">編輯</button>
+                <button class="del" data-del-exp="${e.id}">刪除</button>
+              </div>
             </div>
           </div>`;
         }).join('');
         return `<div class="day-group">
           <div class="day-head"><span>${formatDateLabel(day)}</span><span class="sub">小計 ${money(roundMoney(dayHome, t.homeCurrency), t.homeCurrency)}</span></div>
-          ${rows}
+          ${detail}
+          <div class="expense-list">${rows}</div>
         </div>`;
       }).join('');
+      return tabs + groups;
     })()}
   </div>
   <div class="fab-bar no-print">
@@ -937,6 +1013,7 @@ function bind() {
     });
     $('#btn-enter-trip')?.addEventListener('click', () => {
       state.view = 'trip';
+      state.expenseDateFilter = 'all';
       render();
     });
     return;
@@ -1003,6 +1080,12 @@ function bind() {
       }
       state.trip.members = state.trip.members.filter(m => m.id !== id);
       scheduleSave();
+      render();
+    });
+  });
+  document.querySelectorAll('[data-date-tab]').forEach(b => {
+    b.addEventListener('click', () => {
+      state.expenseDateFilter = b.getAttribute('data-date-tab') || 'all';
       render();
     });
   });
