@@ -66,9 +66,10 @@ function getTrip(code) {
   return data;
 }
 
-function saveTrip(code, data) {
+/** Respect client updatedAt for LWW; never invent a newer server clock that can clobber clients. */
+function saveTrip(code, data, clientUpdatedAt) {
   const c = String(code).toUpperCase();
-  const updatedAt = Date.now();
+  const updatedAt = Number(clientUpdatedAt) > 0 ? Number(clientUpdatedAt) : Date.now();
   data.code = c;
   data.updatedAt = updatedAt;
   trips.set(c, { data: JSON.parse(JSON.stringify(data)), updatedAt });
@@ -86,7 +87,6 @@ function broadcast(code, data) {
     catch (_) { clients.delete(res); }
   }
 }
-
 
 app.get('/api/rate', async (req, res) => {
   const from = String(req.query.from || 'JPY').toUpperCase();
@@ -126,6 +126,7 @@ app.post('/api/trips', (req, res) => {
   let code = genCode();
   for (let i = 0; i < 20 && getTrip(code); i++) code = genCode();
   const body = req.body || {};
+  const now = Date.now();
   const trip = {
     code,
     name: String(body.name || '新行程').slice(0, 80),
@@ -135,9 +136,9 @@ app.post('/api/trips', (req, res) => {
     rateManual: !!body.rateManual,
     members: Array.isArray(body.members) ? body.members : [],
     expenses: Array.isArray(body.expenses) ? body.expenses : [],
-    createdAt: Date.now(),
+    createdAt: now,
   };
-  saveTrip(code, trip);
+  saveTrip(code, trip, now);
   res.status(201).json(trip);
 });
 
@@ -155,7 +156,7 @@ app.put('/api/trips/:code', (req, res) => {
     return res.status(400).json({ error: 'invalid_body' });
   }
   const clientUpdated = Number(incoming.updatedAt) || 0;
-  if (existing && clientUpdated > 0 && clientUpdated < existing.updatedAt - 2000) {
+  if (existing && clientUpdated > 0 && clientUpdated < existing.updatedAt) {
     return res.status(409).json({ error: 'stale', trip: existing });
   }
   const trip = {
@@ -169,7 +170,8 @@ app.put('/api/trips/:code', (req, res) => {
     expenses: Array.isArray(incoming.expenses) ? incoming.expenses : (existing?.expenses || []),
     createdAt: existing?.createdAt || Date.now(),
   };
-  res.json(saveTrip(code, trip));
+  const stamp = clientUpdated || Date.now();
+  res.json(saveTrip(code, trip, stamp));
 });
 
 app.get('/api/trips/:code/events', (req, res) => {

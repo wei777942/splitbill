@@ -379,8 +379,14 @@ function connectSSE(code) {
         const data = JSON.parse(ev.data);
         if (data.missing) return;
         if (!data.code) return;
-        if (state.trip && data.updatedAt && state.trip.updatedAt && data.updatedAt <= state.trip.updatedAt) {
+        if (state.trip && data.updatedAt != null && state.trip.updatedAt != null && data.updatedAt <= state.trip.updatedAt) {
           return; // ignore same/older snapshots — never clobber newer local edits
+        }
+        // ignore empty-ish remote if we have local content with unknown clocks
+        if (state.trip && (state.trip.expenses||[]).length > (data.expenses||[]).length &&
+            (state.trip.members||[]).length >= (data.members||[]).length &&
+            data.updatedAt === state.trip.updatedAt) {
+          return;
         }
         applyingRemote = true;
         state.trip = data;
