@@ -525,15 +525,24 @@ async function fetchRate(trip) {
   if (!trip || trip.rateManual) return;
   const local = trip.localCurrency;
   const home = trip.homeCurrency;
-  if (local === home) { trip.rate = 1; scheduleSave(); return; }
+  if (local === home) {
+    trip.rate = 1;
+    if (state.trip && state.trip.code === trip.code && !state.trip.rateManual) {
+      state.trip.rate = 1;
+      cacheTrip(state.trip);
+      if (state.view === 'trip' || state.view === 'created') render();
+    }
+    return;
+  }
   try {
     const j = await api('/api/rate?from=' + encodeURIComponent(local) + '&to=' + encodeURIComponent(home));
     if (j && j.rate > 0) {
-      // only apply if still same trip and not manually set meanwhile
+      // Local-only: never push from fetchRate — a joining device's auto-rate
+      // PUT was overwriting the creator's newer expenses via a fresher updatedAt.
       if (state.trip && state.trip.code === trip.code && !state.trip.rateManual) {
         state.trip.rate = Number(j.rate);
-        scheduleSave();
-        if (state.view === 'trip') render();
+        cacheTrip(state.trip);
+        if (state.view === 'trip' || state.view === 'created') render();
       }
     }
   } catch (_) {}
