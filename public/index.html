@@ -366,9 +366,7 @@ function connectSSE(code) {
         if (data.missing) return;
         if (!data.code) return;
         if (state.trip && data.updatedAt && state.trip.updatedAt && data.updatedAt <= state.trip.updatedAt) {
-          // same or older
-          if (JSON.stringify(data.expenses) === JSON.stringify(state.trip.expenses) &&
-              JSON.stringify(data.members) === JSON.stringify(state.trip.members)) return;
+          return; // ignore same/older snapshots — never clobber newer local edits
         }
         applyingRemote = true;
         state.trip = data;
