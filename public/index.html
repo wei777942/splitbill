@@ -54,7 +54,7 @@ button { cursor: pointer; border: none; background: none; }
 .row.wrap { flex-wrap: wrap; }
 .grow { flex: 1; min-width: 0; }
 label.field { display: block; font-size: 0.78rem; color: var(--muted); margin-bottom: 4px; }
-input[type=text], input[type=number], select, textarea {
+input[type=text], input[type=number], input[type=date], select, textarea {
   width: 100%; padding: 11px 12px; border-radius: 12px; border: 1.5px solid var(--line);
   background: #f8fffe; outline: none;
 }
@@ -84,6 +84,15 @@ input[readonly]:focus { border-color: var(--line); }
   display: grid; grid-template-columns: 1fr auto; gap: 4px 8px;
 }
 .expense:first-of-type { border-top: none; }
+.day-group { margin-top: 14px; }
+.day-group:first-child { margin-top: 4px; }
+.day-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding: 6px 0 4px; font-weight: 700; font-size: 0.9rem;
+  border-bottom: 1.5px solid var(--line); margin-bottom: 2px;
+}
+.day-head .sub { font-weight: 600; color: var(--muted); font-size: 0.78rem; }
+.day-group .expense:first-of-type { border-top: none; }
 .expense .title { font-weight: 600; }
 .expense .meta { color: var(--muted); font-size: 0.78rem; }
 .expense .amt { font-weight: 700; text-align: right; white-space: nowrap; }
@@ -268,6 +277,36 @@ function roundMoney(n, cur) {
   const digits = (cur === 'JPY' || cur === 'KRW' || cur === 'VND') ? 0 : 2;
   const f = Math.pow(10, digits);
   return Math.round((Number(n) + Number.EPSILON) * f) / f;
+}
+
+/** YYYY-MM-DD in Asia/Taipei */
+function dateInTaipei(ts) {
+  const d = ts == null ? new Date() : new Date(ts);
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(d);
+}
+function todayTaipei() { return dateInTaipei(Date.now()); }
+function expenseDate(exp) {
+  if (exp && exp.date && /^\d{4}-\d{2}-\d{2}$/.test(exp.date)) return exp.date;
+  return dateInTaipei(exp?.createdAt || Date.now());
+}
+function shiftYmd(ymd, days) {
+  const [y, m, d] = ymd.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + days));
+  return dt.toISOString().slice(0, 10);
+}
+function formatDateLabel(ymd) {
+  const [y, m, d] = ymd.split('-').map(Number);
+  const week = ['日','一','二','三','四','五','六'];
+  const w = week[new Date(Date.UTC(y, m - 1, d, 12)).getUTCDay()];
+  const today = todayTaipei();
+  const yest = shiftYmd(today, -1);
+  let tag = `${m}/${d}（${w}）`;
+  if (ymd === today) tag = `今天 · ${tag}`;
+  else if (ymd === yest) tag = `昨天 · ${tag}`;
+  else tag = `${y}/${tag}`;
+  return tag;
 }
 
 function toHome(amount, currency, trip) {
@@ -627,7 +666,6 @@ function renderTrip() {
   const totals = expenseRunningTotals(t);
   const totalHomeApprox = (t.expenses || []).reduce((s, e) => s + toHome(e.amount, e.currency, t), 0);
   const rateStr = t.rate != null ? `1 ${t.localCurrency} ≈ ${roundMoney(t.rate, t.homeCurrency)} ${t.homeCurrency}` : '匯率未設定';
-  const expenses = [...(t.expenses || [])].reverse();
   return `
   <div class="topbar">
     <button class="icon-btn" id="btn-home" title="首頁">⌂</button>
@@ -660,23 +698,39 @@ function renderTrip() {
       <h2 style="margin:0">支出紀錄</h2>
       <span class="muted small">旅途中只記帳</span>
     </div>
-    ${expenses.length === 0 ? '<div class="empty">還沒有支出<br>點下方「記一筆」開始</div>' :
-      expenses.map(e => {
-        const sharers = (e.shares||[]).map(s => memberName(s.memberId)).join('、');
-        return `<div class="expense" data-exp="${e.id}">
-          <div>
-            <div class="title">${escapeHtml(e.title || '支出')}</div>
-            <div class="meta">${escapeHtml(memberName(e.payerId))} 付 · ${e.splitType==='custom'?'自訂':'平均'}分給 ${escapeHtml(sharers||'—')}</div>
-          </div>
-          <div class="amt">${money(e.amount, e.currency)}</div>
-          <div></div>
-          <div class="acts">
-            <button data-edit-exp="${e.id}">編輯</button>
-            <button class="del" data-del-exp="${e.id}">刪除</button>
-          </div>
+    ${(() => {
+      const list = [...(t.expenses || [])];
+      if (!list.length) return '<div class="empty">還沒有支出<br>點下方「記一筆」開始</div>';
+      const byDate = {};
+      list.forEach(e => {
+        const d = expenseDate(e);
+        (byDate[d] = byDate[d] || []).push(e);
+      });
+      const days = Object.keys(byDate).sort((a, b) => b.localeCompare(a));
+      return days.map(day => {
+        const items = byDate[day].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+        const dayHome = items.reduce((s, e) => s + toHome(e.amount, e.currency, t), 0);
+        const rows = items.map(e => {
+          const sharers = (e.shares||[]).map(s => memberName(s.memberId)).join('、');
+          return `<div class="expense" data-exp="${e.id}">
+            <div>
+              <div class="title">${escapeHtml(e.title || '支出')}</div>
+              <div class="meta">${escapeHtml(memberName(e.payerId))} 付 · ${e.splitType==='custom'?'自訂':'平均'}分給 ${escapeHtml(sharers||'—')}</div>
+            </div>
+            <div class="amt">${money(e.amount, e.currency)}</div>
+            <div></div>
+            <div class="acts">
+              <button data-edit-exp="${e.id}">編輯</button>
+              <button class="del" data-del-exp="${e.id}">刪除</button>
+            </div>
+          </div>`;
+        }).join('');
+        return `<div class="day-group">
+          <div class="day-head"><span>${formatDateLabel(day)}</span><span class="sub">小計 ${money(roundMoney(dayHome, t.homeCurrency), t.homeCurrency)}</span></div>
+          ${rows}
         </div>`;
-      }).join('')
-    }
+      }).join('');
+    })()}
   </div>
   <div class="fab-bar no-print">
     <button class="btn secondary" id="btn-settle">結算</button>
@@ -924,12 +978,15 @@ function openExpenseModal(editId) {
   if (!exp) t.members.forEach(m => selected.add(m.id));
   const customMap = {};
   (exp?.shares || []).forEach(s => { if (s.amount != null) customMap[s.memberId] = s.amount; });
+  const defaultDate = expenseDate(exp) || todayTaipei();
 
   openModal(`
     <button class="close" data-close>×</button>
     <h3>${exp ? '編輯支出' : '記一筆'}</h3>
     <label class="field">項目</label>
     <input type="text" id="e-title" maxlength="80" placeholder="例如：晚餐" value="${escapeHtml(exp?.title || '')}">
+    <label class="field" style="margin-top:10px">日期</label>
+    <input type="date" id="e-date" value="${defaultDate}">
     <div class="row" style="margin-top:10px;gap:10px">
       <div class="grow">
         <label class="field">金額</label>
@@ -1066,9 +1123,11 @@ function openExpenseModal(editId) {
         amount = parseFloat(amountInput.value);
       }
       if (!(amount > 0)) { toast(mode === 'custom' ? '請填自訂金額' : '請輸入金額'); return; }
+      const dateVal = modal.querySelector('#e-date').value || todayTaipei();
       const payload = {
         id: exp?.id || uid(),
         title, amount, currency, payerId,
+        date: dateVal,
         splitType: mode,
         shares,
         updatedAt: Date.now(),
