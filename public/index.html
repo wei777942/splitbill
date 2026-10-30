@@ -1293,7 +1293,7 @@ function openExpenseModal(editId) {
     syncCustomVisibility();
 
     modal.querySelector('#e-save').onclick = () => {
-      const title = modal.querySelector('#e-title').value.trim() || '支出';
+      const title = modal.querySelector('#e-title').value.trim();
       const currency = modal.querySelector('#e-cur').value;
       const payerId = modal.querySelector('#e-payer').value;
       const shares = [];
