@@ -250,6 +250,7 @@ let homeDraftMembers = [];
 let es = null;
 let saveTimer = null;
 let applyingRemote = false;
+let saveGen = 0;
 
 function uid() {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
@@ -426,6 +427,7 @@ async function api(path, opts) {
 
 function scheduleSave() {
   if (applyingRemote || !state.trip) return;
+  saveGen += 1;
   state.trip.updatedAt = Date.now();
   cacheTrip(state.trip);
   clearTimeout(saveTimer);
@@ -434,7 +436,7 @@ function scheduleSave() {
 
 async function pushTrip() {
   if (!state.trip) return;
-  const snapshotAt = state.trip.updatedAt || Date.now();
+  const gen = saveGen;
   const snapshot = JSON.parse(JSON.stringify(state.trip));
   state.sync = 'pending';
   updateSyncDot();
@@ -443,8 +445,8 @@ async function pushTrip() {
       method: 'PUT',
       body: JSON.stringify(snapshot),
     });
-    // If local changed while in flight, keep local and push again
-    if (state.trip && state.trip.updatedAt > snapshotAt) {
+    // Local mutated while in flight (even same-ms) — keep local and push again
+    if (saveGen !== gen) {
       state.sync = 'pending';
       updateSyncDot();
       clearTimeout(saveTimer);
@@ -458,7 +460,7 @@ async function pushTrip() {
     state.sync = 'on';
   } catch (e) {
     if (e.status === 409 && e.data?.trip) {
-      if (state.trip && state.trip.updatedAt > (e.data.trip.updatedAt || 0)) {
+      if (saveGen !== gen || (state.trip && state.trip.updatedAt > (e.data.trip.updatedAt || 0))) {
         clearTimeout(saveTimer);
         saveTimer = setTimeout(pushTrip, 200);
       } else {
