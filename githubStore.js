@@ -55,25 +55,68 @@ async function getFile(path) {
   }
 }
 
+/** Serialize Contents API writes — concurrent commits on one branch 409. */
+let writeChain = Promise.resolve();
+function enqueueWrite(fn) {
+  const next = writeChain.then(fn, fn);
+  writeChain = next.catch(() => {});
+  return next;
+}
+
 async function putFile(path, buf, message, sha) {
-  const body = {
-    message: message || `update ${path}`,
-    content: Buffer.from(buf).toString('base64'),
-    branch: branch(),
-  };
-  if (sha) body.sha = sha;
-  return gh(`/contents/${encodeURI(path)}`, { method: 'PUT', body: JSON.stringify(body) });
+  return enqueueWrite(async () => {
+    const content = Buffer.from(buf).toString('base64');
+    let attemptSha = sha;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const body = {
+        message: message || `update ${path}`,
+        content,
+        branch: branch(),
+      };
+      if (attemptSha) body.sha = attemptSha;
+      try {
+        return await gh(`/contents/${encodeURI(path)}`, { method: 'PUT', body: JSON.stringify(body) });
+      } catch (e) {
+        if (e.status !== 409 && e.status !== 422) throw e;
+        const cur = await getFile(path);
+        if (!cur) {
+          attemptSha = undefined;
+          await new Promise((r) => setTimeout(r, 150 * (attempt + 1)));
+          continue;
+        }
+        if (Buffer.compare(cur.buf, Buffer.from(buf)) === 0) {
+          return { content: { sha: cur.sha, path } };
+        }
+        attemptSha = cur.sha;
+        await new Promise((r) => setTimeout(r, 150 * (attempt + 1)));
+      }
+    }
+    throw new Error(`github put exhausted retries for ${path}`);
+  });
 }
 
 async function deleteFile(path, sha, message) {
-  if (!sha) {
-    const cur = await getFile(path);
-    if (!cur) return;
-    sha = cur.sha;
-  }
-  return gh(`/contents/${encodeURI(path)}`, {
-    method: 'DELETE',
-    body: JSON.stringify({ message: message || `delete ${path}`, sha, branch: BRANCH }),
+  return enqueueWrite(async () => {
+    let delSha = sha;
+    if (!delSha) {
+      const cur = await getFile(path);
+      if (!cur) return;
+      delSha = cur.sha;
+    }
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        return await gh(`/contents/${encodeURI(path)}`, {
+          method: 'DELETE',
+          body: JSON.stringify({ message: message || `delete ${path}`, sha: delSha, branch: branch() }),
+        });
+      } catch (e) {
+        if (e.status === 404) return;
+        if (e.status !== 409 && e.status !== 422) throw e;
+        const cur = await getFile(path);
+        if (!cur) return;
+        delSha = cur.sha;
+      }
+    }
   });
 }
 

@@ -475,7 +475,13 @@ app.post('/api/trips/:code/expenses/:expenseId/photos', async (req, res) => {
   }
   exp.photoIds = [...photoIds, id];
   const stamp = Math.max(Number(trip.updatedAt) || 0, now) + 1;
-  saveTrip(code, trip, stamp);
+  const saved = saveTrip(code, trip, stamp);
+  try {
+    const row = trips.get(code);
+    if (row) await persistRow(code, row);
+  } catch (e) {
+    console.error('photo trip persist', e.message);
+  }
   res.status(201).json({ id, mime: parsed.mime, sizeBytes: parsed.buf.length, expenseId });
 });
 
