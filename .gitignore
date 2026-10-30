@@ -3,3 +3,6 @@ data/
 *.db
 *.db-*
 .DS_Store
+
+.secrets/
+../.secrets/

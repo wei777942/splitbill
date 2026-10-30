@@ -119,7 +119,41 @@ input[readonly]:focus { border-color: var(--line); }
   font-size: 0.72rem; padding: 3px 8px; border-radius: 8px; background: #f0fdfa; color: var(--accent);
   min-height: 28px;
 }
+
 .expense .acts button.del { color: var(--danger); background: #fef2f2; }
+.thumb-row { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+.thumb {
+  width: 48px; height: 48px; border-radius: 8px; object-fit: cover;
+  border: 1px solid var(--line); background: #f1f5f9; cursor: pointer;
+}
+.photo-editor { margin-top: 12px; }
+.photo-editor .grid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.photo-slot {
+  position: relative; width: 88px; height: 88px; border-radius: 12px;
+  overflow: hidden; background: #f1f5f9; border: 1.5px dashed var(--line);
+}
+.photo-slot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.photo-slot .rm {
+  position: absolute; top: 4px; right: 4px; width: 24px; height: 24px;
+  border-radius: 999px; background: rgba(0,0,0,.65); color: #fff;
+  font-size: 14px; line-height: 24px; text-align: center; padding: 0;
+  min-height: 24px;
+}
+.photo-add {
+  width: 88px; height: 88px; border-radius: 12px; border: 1.5px dashed var(--accent);
+  background: #ecfdf5; color: var(--accent); font-weight: 700; font-size: 1.4rem;
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.lightbox {
+  position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,.92);
+  display: flex; align-items: center; justify-content: center; padding: 16px;
+}
+.lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 8px; }
+.lightbox .x {
+  position: absolute; top: calc(12px + var(--safe-t)); right: 16px;
+  color: #fff; font-size: 1.6rem; background: transparent; min-height: 44px;
+}
+
 .member-pill {
   display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: 999px;
   background: #ecfdf5; margin: 0 6px 6px 0; font-weight: 600; font-size: 0.9rem;
@@ -860,10 +894,14 @@ function renderTrip() {
           : '';
         const rows = items.map(e => {
           const sharers = (e.shares||[]).map(s => memberName(s.memberId)).join('、');
+          const thumbs = (e.photoIds||[]).map(pid =>
+            `<img class="thumb" src="/api/trips/${t.code}/photos/${pid}" alt="收據" data-photo-view="${pid}" loading="lazy">`
+          ).join('');
           return `<div class="expense" data-exp="${e.id}">
             <div>
               <div class="title">${escapeHtml(expenseTitle(e))}</div>
               <div class="meta">${escapeHtml(memberName(e.payerId))} 付 · ${e.splitType==='custom'?'自訂':'平均'}分給 ${escapeHtml(sharers||'—')}</div>
+              ${thumbs ? `<div class="thumb-row">${thumbs}</div>` : ''}
             </div>
             <div style="text-align:right">
               <div class="amt">${money(e.amount, e.currency)}</div>
@@ -1231,9 +1269,79 @@ function openExpenseModal(editId) {
       }).join('')}
     </div>
     <p class="muted small" id="e-hint" style="margin-top:8px"></p>
+    <div class="photo-editor">
+      <label class="field">收據照片（最多 3 張）</label>
+      <div class="grid" id="e-photos"></div>
+      <input type="file" id="e-photo-file" accept="image/*" capture="environment" class="hidden" multiple>
+      <p class="muted small" style="margin-top:6px">可拍照或從相簿選取，會自動壓縮後上傳</p>
+    </div>
     <button class="btn block" style="margin-top:12px" id="e-save">${exp ? '儲存變更' : '新增'}</button>
   `, (modal) => {
     let mode = splitType;
+    let pendingPhotos = []; // {dataUrl} not yet uploaded
+    let existingPhotoIds = Array.isArray(exp?.photoIds) ? [...exp.photoIds] : [];
+    const photoGrid = modal.querySelector('#e-photos');
+    const fileInput = modal.querySelector('#e-photo-file');
+    const renderPhotoGrid = () => {
+      const slots = [];
+      existingPhotoIds.forEach(pid => {
+        slots.push(`<div class="photo-slot" data-existing="${pid}">
+          <img src="/api/trips/${t.code}/photos/${pid}" alt="">
+          <button type="button" class="rm" data-rm-existing="${pid}">×</button>
+        </div>`);
+      });
+      pendingPhotos.forEach((ph, i) => {
+        slots.push(`<div class="photo-slot" data-pending="${i}">
+          <img src="${ph.dataUrl}" alt="">
+          <button type="button" class="rm" data-rm-pending="${i}">×</button>
+        </div>`);
+      });
+      const total = existingPhotoIds.length + pendingPhotos.length;
+      if (total < 3) {
+        slots.push(`<button type="button" class="photo-add" id="e-photo-add" aria-label="新增照片">＋</button>`);
+      }
+      photoGrid.innerHTML = slots.join('');
+      const addBtn = photoGrid.querySelector('#e-photo-add');
+      if (addBtn) addBtn.onclick = () => fileInput.click();
+      photoGrid.querySelectorAll('[data-rm-existing]').forEach(btn => {
+        btn.onclick = async () => {
+          const pid = btn.getAttribute('data-rm-existing');
+          try {
+            const r = await fetch(`/api/trips/${t.code}/photos/${pid}`, { method: 'DELETE' });
+            if (!r.ok) throw new Error('del');
+            existingPhotoIds = existingPhotoIds.filter(x => x !== pid);
+            if (exp) exp.photoIds = existingPhotoIds;
+            renderPhotoGrid();
+            toast('已刪照片');
+          } catch (_) { toast('刪除失敗'); }
+        };
+      });
+      photoGrid.querySelectorAll('[data-rm-pending]').forEach(btn => {
+        btn.onclick = () => {
+          const i = Number(btn.getAttribute('data-rm-pending'));
+          pendingPhotos.splice(i, 1);
+          renderPhotoGrid();
+        };
+      });
+      photoGrid.querySelectorAll('.photo-slot img').forEach(img => {
+        img.onclick = () => openLightbox(img.src);
+      });
+    };
+    fileInput.onchange = async () => {
+      const files = [...(fileInput.files || [])];
+      fileInput.value = '';
+      for (const f of files) {
+        if (existingPhotoIds.length + pendingPhotos.length >= 3) { toast('最多 3 張照片'); break; }
+        try {
+          const dataUrl = await compressImageFile(f);
+          pendingPhotos.push({ dataUrl });
+        } catch (err) {
+          toast('圖片處理失敗');
+        }
+      }
+      renderPhotoGrid();
+    };
+    renderPhotoGrid();
     const amountInput = modal.querySelector('#e-amount');
     const amountLabel = amountInput.closest('.grow')?.querySelector('label.field');
     const customSum = () => {
@@ -1342,17 +1450,101 @@ function openExpenseModal(editId) {
         updatedAt: Date.now(),
         createdAt: exp?.createdAt || Date.now(),
       };
+      payload.photoIds = [...existingPhotoIds];
       if (exp) {
         const idx = t.expenses.findIndex(e => e.id === exp.id);
         t.expenses[idx] = payload;
       } else {
         t.expenses.push(payload);
       }
+      // Upload pending photos after expense exists on trip
+      const uploadPending = async () => {
+        for (const ph of pendingPhotos) {
+          try {
+            const r = await fetch(`/api/trips/${t.code}/expenses/${payload.id}/photos`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ dataUrl: ph.dataUrl }),
+            });
+            if (!r.ok) {
+              const err = await r.json().catch(() => ({}));
+              throw new Error(err.error || 'upload');
+            }
+            const j = await r.json();
+            payload.photoIds = payload.photoIds || [];
+            if (!payload.photoIds.includes(j.id)) payload.photoIds.push(j.id);
+            // refresh from server trip after saveTrip on server
+          } catch (e) {
+            toast('照片上傳失敗');
+          }
+        }
+      };
       scheduleSave();
       closeModal();
       render();
       toast(exp ? '已更新' : '已記一筆');
+      if (pendingPhotos.length) {
+        uploadPending().then(async () => {
+          // pull latest so photoIds sync
+          try {
+            const r = await fetch(`/api/trips/${t.code}`);
+            if (r.ok) {
+              const fresh = await r.json();
+              if (fresh && fresh.updatedAt >= (state.trip.updatedAt || 0)) {
+                state.trip = fresh;
+                saveLocal();
+                render();
+              }
+            }
+          } catch (_) {}
+        });
+      }
     };
+  });
+}
+
+
+function openLightbox(src) {
+  const el = document.createElement('div');
+  el.className = 'lightbox';
+  el.innerHTML = `<button type="button" class="x" aria-label="關閉">×</button><img src="${src}" alt="收據">`;
+  el.querySelector('.x').onclick = () => el.remove();
+  el.onclick = (ev) => { if (ev.target === el) el.remove(); };
+  document.body.appendChild(el);
+}
+
+async function compressImageFile(file, maxEdge = 1280, quality = 0.7, targetBytes = 300 * 1024) {
+  const bitmap = await createImageBitmap(file);
+  let w = bitmap.width, h = bitmap.height;
+  const scale = Math.min(1, maxEdge / Math.max(w, h));
+  w = Math.max(1, Math.round(w * scale));
+  h = Math.max(1, Math.round(h * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(bitmap, 0, 0, w, h);
+  bitmap.close && bitmap.close();
+  let q = quality;
+  let blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', q));
+  while (blob && blob.size > targetBytes && q > 0.35) {
+    q -= 0.1;
+    blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', q));
+  }
+  if (!blob) throw new Error('compress');
+  // If still huge, shrink further
+  if (blob.size > targetBytes) {
+    const scale2 = Math.sqrt(targetBytes / blob.size) * 0.95;
+    canvas.width = Math.max(1, Math.round(w * scale2));
+    canvas.height = Math.max(1, Math.round(h * scale2));
+    ctx.drawImage(await createImageBitmap(blob), 0, 0, canvas.width, canvas.height);
+    blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.65));
+  }
+  if (!blob || blob.size > 350 * 1024) throw new Error('too_large');
+  return await new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(fr.result);
+    fr.onerror = reject;
+    fr.readAsDataURL(blob);
   });
 }
 
@@ -1371,6 +1563,12 @@ async function boot() {
       state.view = 'home';
       render();
     }
+  });
+  document.addEventListener('click', (ev) => {
+    const t = ev.target.closest('[data-photo-view]');
+    if (!t || !state.trip) return;
+    const pid = t.getAttribute('data-photo-view');
+    openLightbox(`/api/trips/${state.trip.code}/photos/${pid}`);
   });
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && state.trip) {
