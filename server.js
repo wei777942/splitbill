@@ -87,6 +87,37 @@ function broadcast(code, data) {
   }
 }
 
+
+app.get('/api/rate', async (req, res) => {
+  const from = String(req.query.from || 'JPY').toUpperCase();
+  const to = String(req.query.to || 'TWD').toUpperCase();
+  if (from === to) return res.json({ rate: 1, source: 'identity' });
+  const tryFetch = async (url, pick) => {
+    const r = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!r.ok) throw new Error('http ' + r.status);
+    const j = await r.json();
+    const rate = pick(j);
+    if (!(rate > 0)) throw new Error('no rate');
+    return rate;
+  };
+  try {
+    const rate = await tryFetch(
+      `https://api.frankfurter.dev/v1/latest?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+      (j) => j.rates && j.rates[to]
+    );
+    return res.json({ rate, source: 'frankfurter' });
+  } catch (_) {}
+  try {
+    const rate = await tryFetch(
+      `https://open.er-api.com/v6/latest/${encodeURIComponent(from)}`,
+      (j) => j.rates && j.rates[to]
+    );
+    return res.json({ rate, source: 'open.er-api' });
+  } catch (e) {
+    return res.status(502).json({ error: 'rate_unavailable', message: String(e.message || e) });
+  }
+});
+
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, ts: Date.now(), trips: trips.size });
 });

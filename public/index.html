@@ -324,13 +324,23 @@ function scheduleSave() {
 
 async function pushTrip() {
   if (!state.trip) return;
+  const snapshotAt = state.trip.updatedAt || Date.now();
+  const snapshot = JSON.parse(JSON.stringify(state.trip));
   state.sync = 'pending';
   updateSyncDot();
   try {
-    const saved = await api('/api/trips/' + state.trip.code, {
+    const saved = await api('/api/trips/' + snapshot.code, {
       method: 'PUT',
-      body: JSON.stringify(state.trip),
+      body: JSON.stringify(snapshot),
     });
+    // If local changed while in flight, keep local and push again
+    if (state.trip && state.trip.updatedAt > snapshotAt) {
+      state.sync = 'pending';
+      updateSyncDot();
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(pushTrip, 200);
+      return;
+    }
     applyingRemote = true;
     state.trip = saved;
     applyingRemote = false;
@@ -338,16 +348,20 @@ async function pushTrip() {
     state.sync = 'on';
   } catch (e) {
     if (e.status === 409 && e.data?.trip) {
-      applyingRemote = true;
-      state.trip = e.data.trip;
-      applyingRemote = false;
-      cacheTrip(state.trip);
-      state.sync = 'on';
-      render();
-      toast('已同步較新版本');
+      if (state.trip && state.trip.updatedAt > (e.data.trip.updatedAt || 0)) {
+        clearTimeout(saveTimer);
+        saveTimer = setTimeout(pushTrip, 200);
+      } else {
+        applyingRemote = true;
+        state.trip = e.data.trip;
+        applyingRemote = false;
+        cacheTrip(state.trip);
+        state.sync = 'on';
+        render();
+        toast('已同步較新版本');
+      }
     } else {
       state.sync = 'off';
-      // offline ok — localStorage has it
     }
   }
   updateSyncDot();
@@ -395,26 +409,13 @@ async function fetchRate(trip) {
   const home = trip.homeCurrency;
   if (local === home) { trip.rate = 1; scheduleSave(); return; }
   try {
-    // frankfurter: rates relative to base
-    const url = `https://api.frankfurter.app/latest?from=${encodeURIComponent(local)}&to=${encodeURIComponent(home)}`;
-    const res = await fetch(url);
-    if (res.ok) {
-      const j = await res.json();
-      if (j.rates && j.rates[home]) {
-        trip.rate = Number(j.rates[home]);
+    const j = await api('/api/rate?from=' + encodeURIComponent(local) + '&to=' + encodeURIComponent(home));
+    if (j && j.rate > 0) {
+      // only apply if still same trip and not manually set meanwhile
+      if (state.trip && state.trip.code === trip.code && !state.trip.rateManual) {
+        state.trip.rate = Number(j.rate);
         scheduleSave();
-        return;
-      }
-    }
-  } catch (_) {}
-  try {
-    const url = `https://open.er-api.com/v6/latest/${encodeURIComponent(local)}`;
-    const res = await fetch(url);
-    if (res.ok) {
-      const j = await res.json();
-      if (j.rates && j.rates[home]) {
-        trip.rate = Number(j.rates[home]);
-        scheduleSave();
+        if (state.view === 'trip') render();
       }
     }
   } catch (_) {}
