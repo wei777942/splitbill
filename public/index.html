@@ -583,6 +583,7 @@ async function fetchRate(trip) {
 }
 
 async function createTrip(name, home, local, members) {
+  const same = String(home).toUpperCase() === String(local).toUpperCase();
   const trip = await api('/api/trips', {
     method: 'POST',
     body: JSON.stringify({
@@ -591,6 +592,7 @@ async function createTrip(name, home, local, members) {
       localCurrency: local,
       members: Array.isArray(members) ? members : [],
       expenses: [],
+      ...(same ? { rate: 1 } : {}),
     }),
   });
   state.trip = trip;
@@ -765,7 +767,7 @@ function renderHome() {
     <div class="row" style="margin-top:10px;gap:10px">
       <div class="grow">
         <label class="field">當地幣</label>
-        <select id="new-local">${CURRENCIES.map(c => `<option value="${c}" ${c==='JPY'?'selected':''}>${c}</option>`).join('')}</select>
+        <select id="new-local">${CURRENCIES.map(c => `<option value="${c}" ${c==='TWD'?'selected':''}>${c}</option>`).join('')}</select>
       </div>
       <div class="grow">
         <label class="field">回家幣（結算）</label>
@@ -1154,7 +1156,9 @@ function bind() {
   $('#btn-settle')?.addEventListener('click', () => {
     if (!(state.trip.members || []).length) { toast('請先新增成員'); return; }
     if (!(state.trip.expenses || []).length) { toast('尚無支出可結算'); return; }
-    if (state.trip.rate == null || !(state.trip.rate > 0)) {
+    if (state.trip.localCurrency === state.trip.homeCurrency) {
+      if (!(state.trip.rate > 0)) state.trip.rate = 1;
+    } else if (state.trip.rate == null || !(state.trip.rate > 0)) {
       toast('請先在設定中確認匯率');
       openSettings();
       return;
@@ -1206,7 +1210,11 @@ function openSettings() {
       t.homeCurrency = modal.querySelector('#s-home').value;
       const r = parseFloat(modal.querySelector('#s-rate').value);
       t.rateManual = modal.querySelector('#s-manual').checked;
-      if (isFinite(r) && r > 0) t.rate = r;
+      if (t.localCurrency === t.homeCurrency) {
+        t.rate = 1;
+      } else if (isFinite(r) && r > 0) {
+        t.rate = r;
+      }
       scheduleSave();
       closeModal();
       render();
@@ -1242,8 +1250,7 @@ function openExpenseModal(editId) {
       <div style="width:110px">
         <label class="field">幣別</label>
         <select id="e-cur">
-          <option value="${t.localCurrency}" ${defaultCurrency===t.localCurrency?'selected':''}>${t.localCurrency}</option>
-          <option value="${t.homeCurrency}" ${defaultCurrency===t.homeCurrency?'selected':''}>${t.homeCurrency}</option>
+          ${[...new Set([t.localCurrency, t.homeCurrency])].map(c => `<option value="${c}" ${defaultCurrency===c?'selected':''}>${c}</option>`).join('')}
         </select>
       </div>
     </div>

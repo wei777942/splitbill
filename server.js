@@ -354,13 +354,16 @@ app.post('/api/trips', (req, res) => {
     code,
     name: String(body.name || '新行程').slice(0, 80),
     homeCurrency: String(body.homeCurrency || 'TWD').toUpperCase().slice(0, 8),
-    localCurrency: String(body.localCurrency || 'JPY').toUpperCase().slice(0, 8),
+    localCurrency: String(body.localCurrency || 'TWD').toUpperCase().slice(0, 8),
     rate: typeof body.rate === 'number' && body.rate > 0 ? body.rate : null,
     rateManual: !!body.rateManual,
     members: Array.isArray(body.members) ? body.members : [],
     expenses: Array.isArray(body.expenses) ? body.expenses : [],
     createdAt: now,
   };
+  if (trip.homeCurrency === trip.localCurrency) {
+    trip.rate = trip.rate > 0 ? trip.rate : 1;
+  }
   saveTrip(code, trip, now);
   res.status(201).json(trip);
 });
@@ -410,7 +413,7 @@ app.put('/api/trips/:code', (req, res) => {
     code,
     name: String(incoming.name || existing?.name || '新行程').slice(0, 80),
     homeCurrency: String(incoming.homeCurrency || existing?.homeCurrency || 'TWD').toUpperCase().slice(0, 8),
-    localCurrency: String(incoming.localCurrency || existing?.localCurrency || 'JPY').toUpperCase().slice(0, 8),
+    localCurrency: String(incoming.localCurrency || existing?.localCurrency || 'TWD').toUpperCase().slice(0, 8),
     rate: typeof incoming.rate === 'number' ? incoming.rate : (existing?.rate ?? null),
     rateManual: incoming.rateManual != null ? !!incoming.rateManual : !!existing?.rateManual,
     members: Array.isArray(incoming.members) ? incoming.members : (existing?.members || []),
