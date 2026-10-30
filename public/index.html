@@ -178,6 +178,19 @@ input[readonly]:focus { border-color: var(--line); }
 }
 .home-hero h1 { margin: 0 0 6px; font-size: 1.5rem; }
 .empty { text-align: center; padding: 28px 12px; color: var(--muted); }
+.draft-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; min-height: 36px; }
+.draft-chip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: 999px;
+  background: #ecfdf5; font-weight: 600; font-size: 0.9rem;
+}
+.draft-chip button { color: var(--danger); font-size: 0.85rem; padding: 0 2px; line-height: 1; }
+.invite-code {
+  font-size: 2rem; font-weight: 800; letter-spacing: 0.18em; text-align: center;
+  padding: 16px 8px; background: #ecfdf5; border-radius: 16px; margin: 10px 0;
+}
+.invite-actions { display: grid; gap: 8px; margin-top: 12px; }
+.invite-actions .row { gap: 8px; }
+
 .totals {
   display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px;
 }
@@ -205,12 +218,14 @@ const LS_KEY = 'splitbill_v1';
 const CURRENCIES = ['TWD','JPY','USD','EUR','KRW','THB','HKD','CNY','SGD','GBP','AUD','VND'];
 
 let state = {
-  view: 'home', // home | trip | settle
+  view: 'home', // home | created | trip | settle
   trip: null,
   sync: 'off', // on | off | pending
   editingExpenseId: null,
   recentCodes: [],
 };
+/** Names staged on the home create form (not yet a trip). */
+let homeDraftMembers = [];
 
 let es = null;
 let saveTimer = null;
@@ -468,13 +483,20 @@ async function fetchRate(trip) {
   } catch (_) {}
 }
 
-async function createTrip(name, home, local) {
+async function createTrip(name, home, local, members) {
   const trip = await api('/api/trips', {
     method: 'POST',
-    body: JSON.stringify({ name, homeCurrency: home, localCurrency: local, members: [], expenses: [] }),
+    body: JSON.stringify({
+      name,
+      homeCurrency: home,
+      localCurrency: local,
+      members: Array.isArray(members) ? members : [],
+      expenses: [],
+    }),
   });
   state.trip = trip;
-  state.view = 'trip';
+  state.view = 'created';
+  homeDraftMembers = [];
   rememberCode(trip.code);
   location.hash = 't/' + trip.code;
   connectSSE(trip.code);
@@ -627,6 +649,9 @@ function expenseRunningTotals(trip) {
 function renderHome() {
   loadLocal();
   const recent = state.recentCodes || [];
+  const chips = homeDraftMembers.map(m =>
+    `<span class="draft-chip">${escapeHtml(m.name)}<button type="button" data-rm-draft="${m.id}" aria-label="移除">×</button></span>`
+  ).join('');
   return `
   <div class="home-hero">
     <div class="logo">¥$</div>
@@ -647,7 +672,13 @@ function renderHome() {
         <select id="new-home">${CURRENCIES.map(c => `<option value="${c}" ${c==='TWD'?'selected':''}>${c}</option>`).join('')}</select>
       </div>
     </div>
-    <button class="btn block" style="margin-top:14px" id="btn-create">建立行程</button>
+    <label class="field" style="margin-top:12px">同行成員（可稍後再加）</label>
+    <div class="row" style="gap:8px">
+      <input class="grow" type="text" id="new-member" placeholder="輸入暱稱後按加入" maxlength="24">
+      <button class="btn secondary" type="button" id="btn-add-draft" style="padding:10px 14px">加入</button>
+    </div>
+    <div class="draft-chips" id="draft-chips">${chips || '<span class="muted small">尚未加入成員</span>'}</div>
+    <button class="btn block" style="margin-top:14px" id="btn-create">建立行程並產生邀請碼</button>
   </div>
   <div class="card">
     <h2>加入行程</h2>
@@ -659,6 +690,39 @@ function renderHome() {
     ${recent.length ? `<div style="margin-top:12px"><div class="muted small">最近</div>${recent.map(c => `<button class="chip" data-recent="${c}" style="margin:6px 6px 0 0">${c}</button>`).join('')}</div>` : ''}
   </div>
   <p class="muted small" style="text-align:center;margin-top:18px">不上傳個人資料 · 無金流付款</p>`;
+}
+
+function renderCreated() {
+  const t = state.trip;
+  if (!t) return renderHome();
+  const link = shareLink();
+  const members = (t.members || []).map(m => escapeHtml(m.name)).join('、') || '（尚未加入）';
+  const canNativeShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
+  return `
+  <div class="topbar">
+    <button class="icon-btn" id="btn-created-home" title="首頁">⌂</button>
+    <h1>邀請同行</h1>
+    <span style="width:40px"></span>
+  </div>
+  <div class="card">
+    <p class="muted small" style="margin:0 0 4px">行程已建立</p>
+    <h2 style="margin:0 0 8px">${escapeHtml(t.name)}</h2>
+    <p class="muted small">成員：${members}</p>
+    <p class="muted" style="margin-top:12px;margin-bottom:0">把邀請碼或連結傳給朋友，對方免登入即可同步</p>
+    <div class="invite-code" id="created-code">${escapeHtml(t.code)}</div>
+    <div class="invite-actions">
+      <div class="row">
+        <input class="grow" readonly value="${escapeHtml(t.code)}" id="created-code-input">
+        <button class="btn secondary" id="btn-copy-code">複製代碼</button>
+      </div>
+      <div class="row">
+        <input class="grow" readonly value="${escapeHtml(link)}" id="created-link-input">
+        <button class="btn secondary" id="btn-copy-link">複製連結</button>
+      </div>
+      ${canNativeShare ? '<button class="btn ghost block" id="btn-native-share">系統分享…</button>' : ''}
+      <button class="btn block" id="btn-enter-trip">進入行程開始記帳</button>
+    </div>
+  </div>`;
 }
 
 function renderTrip() {
@@ -805,6 +869,7 @@ function escapeHtml(s) {
 function render() {
   const app = $('#app');
   if (state.view === 'home') app.innerHTML = renderHome();
+  else if (state.view === 'created') app.innerHTML = renderCreated();
   else if (state.view === 'settle') app.innerHTML = renderSettle();
   else app.innerHTML = renderTrip();
   bind();
@@ -813,16 +878,66 @@ function render() {
 
 function bind() {
   if (state.view === 'home') {
+    const addDraft = () => {
+      const inp = $('#new-member');
+      const name = (inp?.value || '').trim();
+      if (!name) { toast('請輸入暱稱'); return; }
+      if (homeDraftMembers.some(m => m.name === name)) { toast('已有同名成員'); return; }
+      homeDraftMembers.push({ id: uid(), name });
+      if (inp) inp.value = '';
+      render();
+      $('#new-member')?.focus();
+    };
+    $('#btn-add-draft')?.addEventListener('click', addDraft);
+    $('#new-member')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); addDraft(); }
+    });
+    document.querySelectorAll('[data-rm-draft]').forEach(b => {
+      b.addEventListener('click', () => {
+        const id = b.getAttribute('data-rm-draft');
+        homeDraftMembers = homeDraftMembers.filter(m => m.id !== id);
+        render();
+      });
+    });
     $('#btn-create')?.addEventListener('click', async () => {
       const name = $('#new-name').value.trim() || '新行程';
       const home = $('#new-home').value;
       const local = $('#new-local').value;
-      try { await createTrip(name, home, local); }
+      const members = homeDraftMembers.map(m => ({ id: m.id, name: m.name }));
+      try { await createTrip(name, home, local, members); }
       catch (e) { toast('建立失敗'); console.error(e); }
     });
     $('#btn-join')?.addEventListener('click', () => joinTrip($('#join-code').value));
     document.querySelectorAll('[data-recent]').forEach(b => {
       b.addEventListener('click', () => joinTrip(b.getAttribute('data-recent')));
+    });
+    return;
+  }
+
+  if (state.view === 'created') {
+    const link = shareLink();
+    $('#btn-created-home')?.addEventListener('click', () => {
+      state.view = 'home';
+      location.hash = '';
+      if (es) { try { es.close(); } catch(_){} es = null; }
+      render();
+    });
+    $('#btn-copy-code')?.addEventListener('click', () => copyText(state.trip.code));
+    $('#btn-copy-link')?.addEventListener('click', () => copyText(link));
+    $('#btn-native-share')?.addEventListener('click', async () => {
+      try {
+        await navigator.share({
+          title: state.trip.name + ' · 旅行分帳',
+          text: `一起用「旅行分帳」記帳，邀請碼 ${state.trip.code}`,
+          url: link,
+        });
+      } catch (e) {
+        if (e && e.name !== 'AbortError') toast('無法開啟系統分享');
+      }
+    });
+    $('#btn-enter-trip')?.addEventListener('click', () => {
+      state.view = 'trip';
+      render();
     });
     return;
   }
