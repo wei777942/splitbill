@@ -59,6 +59,8 @@ input[type=text], input[type=number], select, textarea {
   background: #f8fffe; outline: none;
 }
 input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+input[readonly] { background: #eef5f3; color: var(--ink); cursor: default; }
+input[readonly]:focus { border-color: var(--line); }
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   padding: 12px 16px; border-radius: 14px; font-weight: 600; background: var(--accent); color: #fff;
@@ -966,24 +968,45 @@ function openExpenseModal(editId) {
     <button class="btn block" style="margin-top:12px" id="e-save">${exp ? '儲存變更' : '新增'}</button>
   `, (modal) => {
     let mode = splitType;
+    const amountInput = modal.querySelector('#e-amount');
+    const amountLabel = amountInput.closest('.grow')?.querySelector('label.field');
+    const customSum = () => {
+      let sum = 0;
+      modal.querySelectorAll('.check-item').forEach(row => {
+        if (!row.querySelector('input[type=checkbox]').checked) return;
+        sum += parseFloat(row.querySelector('.custom-amt').value) || 0;
+      });
+      return sum;
+    };
+    const syncAmountField = () => {
+      if (mode === 'custom') {
+        amountInput.readOnly = true;
+        amountInput.value = String(roundMoney(customSum(), modal.querySelector('#e-cur').value));
+        if (amountLabel) amountLabel.textContent = '金額（自訂加總）';
+      } else {
+        amountInput.readOnly = false;
+        if (amountLabel) amountLabel.textContent = '金額';
+      }
+    };
     const updateHint = () => {
-      const amount = parseFloat(modal.querySelector('#e-amount').value) || 0;
       const checked = [...modal.querySelectorAll('.check-item')].filter(x => x.querySelector('input[type=checkbox]').checked);
       const hint = modal.querySelector('#e-hint');
+      const cur = modal.querySelector('#e-cur').value;
       if (mode === 'equal') {
-        hint.textContent = checked.length ? `每人約 ${roundMoney(amount / checked.length, modal.querySelector('#e-cur').value)} ${modal.querySelector('#e-cur').value}` : '請勾選分攤成員';
+        const amount = parseFloat(amountInput.value) || 0;
+        hint.textContent = checked.length ? `每人約 ${roundMoney(amount / checked.length, cur)} ${cur}` : '請勾選分攤成員';
       } else {
-        let sum = 0;
-        checked.forEach(row => { sum += parseFloat(row.querySelector('.custom-amt').value) || 0; });
-        const cur = modal.querySelector('#e-cur').value;
-        const diff = roundMoney(amount - sum, cur);
-        hint.textContent = `自訂合計 ${roundMoney(sum, cur)} / 總額 ${roundMoney(amount, cur)}` + (Math.abs(diff) > 0.009 ? `（差額 ${diff}）` : ' ✓');
+        const sum = customSum();
+        hint.textContent = checked.length
+          ? `總額自動加總：${roundMoney(sum, cur)} ${cur}`
+          : '請勾選分攤成員並填金額';
       }
     };
     const syncCustomVisibility = () => {
       modal.querySelectorAll('.custom-amt').forEach(inp => {
         inp.classList.toggle('hidden', mode !== 'custom');
       });
+      syncAmountField();
       updateHint();
     };
     modal.querySelectorAll('#e-split button').forEach(btn => {
@@ -999,18 +1022,23 @@ function openExpenseModal(editId) {
       cb.onchange = () => {
         row.classList.toggle('on', cb.checked);
         amt.disabled = !cb.checked;
+        if (mode === 'custom') syncAmountField();
         updateHint();
       };
-      amt.oninput = updateHint;
+      amt.oninput = () => {
+        if (mode === 'custom') syncAmountField();
+        updateHint();
+      };
     });
-    modal.querySelector('#e-amount').oninput = updateHint;
-    modal.querySelector('#e-cur').onchange = updateHint;
+    amountInput.oninput = updateHint;
+    modal.querySelector('#e-cur').onchange = () => {
+      if (mode === 'custom') syncAmountField();
+      updateHint();
+    };
     syncCustomVisibility();
 
     modal.querySelector('#e-save').onclick = () => {
       const title = modal.querySelector('#e-title').value.trim() || '支出';
-      const amount = parseFloat(modal.querySelector('#e-amount').value);
-      if (!(amount > 0)) { toast('請輸入金額'); return; }
       const currency = modal.querySelector('#e-cur').value;
       const payerId = modal.querySelector('#e-payer').value;
       const shares = [];
@@ -1021,7 +1049,7 @@ function openExpenseModal(editId) {
         const mid = row.getAttribute('data-mid');
         if (mode === 'custom') {
           const a = parseFloat(row.querySelector('.custom-amt').value);
-          if (!(a >= 0)) { badCustom = true; return; }
+          if (!(a >= 0) || Number.isNaN(a)) { badCustom = true; return; }
           shares.push({ memberId: mid, amount: a });
         } else {
           shares.push({ memberId: mid });
@@ -1029,12 +1057,15 @@ function openExpenseModal(editId) {
       });
       if (badCustom) { toast('請填自訂金額'); return; }
       if (!shares.length) { toast('請至少勾選一位分攤'); return; }
+      let amount;
       if (mode === 'custom') {
-        const sum = shares.reduce((s, x) => s + x.amount, 0);
-        if (Math.abs(sum - amount) > 0.02) {
-          if (!confirm(`自訂合計 ${sum} 與總額 ${amount} 不符，仍要儲存？`)) return;
-        }
+        amount = shares.reduce((s, x) => s + x.amount, 0);
+        amount = roundMoney(amount, currency);
+        amountInput.value = String(amount);
+      } else {
+        amount = parseFloat(amountInput.value);
       }
+      if (!(amount > 0)) { toast(mode === 'custom' ? '請填自訂金額' : '請輸入金額'); return; }
       const payload = {
         id: exp?.id || uid(),
         title, amount, currency, payerId,
