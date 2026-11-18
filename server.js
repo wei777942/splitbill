@@ -28,10 +28,33 @@ app.use((err, req, res, next) => {
   }
   return next(err);
 });
+function sendManifest(req, res) {
+  const file = path.join(__dirname, 'public', 'manifest.webmanifest');
+  let body = {};
+  try { body = JSON.parse(fs.readFileSync(file, 'utf8')); }
+  catch (_) { body = { name: '分帳吧', short_name: '分帳吧', start_url: '/', display: 'standalone' }; }
+  const raw = String(req.query.code || '').trim().toUpperCase();
+  const code = /^[A-Z0-9]{4,16}$/.test(raw) ? raw : '';
+  body.start_url = code ? `/?code=${encodeURIComponent(code)}` : '/';
+  body.scope = '/';
+  body.id = body.id || '/';
+  res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  res.status(200).send(JSON.stringify(body, null, 2));
+}
+app.get('/manifest.webmanifest', sendManifest);
+app.get('/manifest.json', sendManifest);
+
 app.use(express.static(path.join(__dirname, 'public'), {
   maxAge: process.env.NODE_ENV === 'production' ? '1h' : 0,
   etag: true,
   index: false,
+  setHeaders(res, filePath) {
+    if (filePath.endsWith(`${path.sep}sw.js`) || filePath.endsWith('/sw.js')) {
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Service-Worker-Allowed', '/');
+    }
+  },
 }));
 
 /** @type {Map<string, {data: object, updatedAt: number}>} */

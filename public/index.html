@@ -430,6 +430,7 @@ function loadLocal() {
     if (!raw) return;
     const data = JSON.parse(raw);
     if (data.recentCodes) state.recentCodes = data.recentCodes;
+    else if (data.lastCode) state.recentCodes = [data.lastCode];
     if (data.trips && state.trip && data.trips[state.trip.code]) {
       // handled elsewhere
     }
@@ -453,6 +454,32 @@ function rememberCode(code) {
   code = code.toUpperCase();
   state.recentCodes = [code, ...state.recentCodes.filter(c => c !== code)].slice(0, 8);
   cacheTrip(state.trip);
+  try {
+    const data = JSON.parse(localStorage.getItem(LS_KEY) || '{}');
+    data.lastCode = code;
+    data.recentCodes = state.recentCodes;
+    localStorage.setItem(LS_KEY, JSON.stringify(data));
+  } catch (_) {}
+}
+
+function lastTripCode() {
+  if (state.recentCodes && state.recentCodes[0]) return state.recentCodes[0];
+  try {
+    const data = JSON.parse(localStorage.getItem(LS_KEY) || '{}');
+    if (data.lastCode) return String(data.lastCode).toUpperCase();
+    if (Array.isArray(data.recentCodes) && data.recentCodes[0]) return data.recentCodes[0];
+  } catch (_) {}
+  return null;
+}
+
+/** Point the manifest start_url at the current trip so Add-to-Home-Screen opens it. */
+function syncManifest(code) {
+  const link = document.querySelector('link[rel="manifest"]');
+  if (!link) return;
+  const href = code
+    ? '/manifest.webmanifest?code=' + encodeURIComponent(String(code).toUpperCase())
+    : '/manifest.webmanifest';
+  if (link.getAttribute('href') !== href) link.setAttribute('href', href);
 }
 
 function money(n, cur) {
@@ -832,6 +859,7 @@ async function createTrip(name, home, local, members) {
   homeDraftMembers = [];
   homeDraftForm = { name: '東京之旅', local: 'TWD', home: 'TWD' };
   rememberCode(trip.code);
+  syncManifest(trip.code);
   location.hash = 't/' + trip.code;
   connectSSE(trip.code);
   fetchRate(trip);
@@ -863,6 +891,7 @@ async function joinTrip(code) {
   state.view = 'trip';
   state.expenseDateFilter = 'all';
   rememberCode(code);
+  syncManifest(code);
   location.hash = 't/' + code;
   connectSSE(code);
   if (!state.trip.rate && !state.trip.rateManual) fetchRate(state.trip);
@@ -1644,6 +1673,7 @@ function bind() {
     $('#btn-created-home')?.addEventListener('click', () => {
       state.view = 'home';
       location.hash = '';
+      syncManifest(null);
       if (es) { try { es.close(); } catch(_){} es = null; }
       render();
     });
@@ -1683,6 +1713,7 @@ function bind() {
   $('#btn-home')?.addEventListener('click', () => {
     state.view = 'home';
     location.hash = '';
+    syncManifest(null);
     if (es) { try { es.close(); } catch(_){} es = null; }
     render();
   });
@@ -2344,17 +2375,19 @@ async function compressImageFile(file, maxEdge = 1280, quality = 0.7, targetByte
 
 async function boot() {
   loadLocal();
-  const code = parseHash();
-  if (code) {
-    await joinTrip(code);
-  } else {
-    render();
+  const fromLink = parseHash();
+  const code = fromLink || lastTripCode();
+  if (code) await joinTrip(code);
+  else render();
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => {});
   }
   window.addEventListener('hashchange', () => {
     const c = parseHash();
     if (c && (!state.trip || state.trip.code !== c)) joinTrip(c);
     if (!c && state.view !== 'home') {
       state.view = 'home';
+      syncManifest(null);
       render();
     }
   });
