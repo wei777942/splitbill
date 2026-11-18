@@ -146,13 +146,45 @@ input[readonly]:focus { border-color: var(--line); }
   display: flex; align-items: center; justify-content: center; cursor: pointer;
 }
 .lightbox {
-  position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,.92);
-  display: flex; align-items: center; justify-content: center; padding: 16px;
+  position: fixed; inset: 0; z-index: 200;
+  background: rgba(0,0,0,.9);
+  display: flex; align-items: center; justify-content: center;
+  padding: calc(56px + var(--safe-t)) 16px calc(24px + var(--safe-b));
+  overflow: hidden; overscroll-behavior: none;
 }
-.lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 8px; }
+.lightbox img {
+  display: block; width: auto; height: auto;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - var(--safe-t) - var(--safe-b) - 96px);
+  max-height: calc(100dvh - var(--safe-t) - var(--safe-b) - 96px);
+  object-fit: contain; border-radius: 8px;
+}
 .lightbox .x {
-  position: absolute; top: calc(12px + var(--safe-t)); right: 16px;
-  color: #fff; font-size: 1.6rem; background: transparent; min-height: 44px;
+  position: fixed; top: calc(10px + var(--safe-t)); right: 12px;
+  z-index: 210;
+  width: 48px; height: 48px; min-width: 48px; min-height: 48px; padding: 0;
+  border-radius: 999px;
+  background: rgba(0,0,0,.6);
+  color: #fff; font-size: 1.7rem; line-height: 1; font-weight: 600;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 0 0 1.5px rgba(255,255,255,.45);
+  white-space: nowrap;
+}
+.lightbox .lb-nav {
+  position: fixed; top: 50%; transform: translateY(-50%);
+  z-index: 210;
+  width: 44px; height: 44px; min-width: 44px; min-height: 44px; padding: 0;
+  border-radius: 999px;
+  background: rgba(0,0,0,.55); color: #fff; font-size: 1.8rem; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  white-space: nowrap;
+}
+.lightbox .lb-nav.prev { left: 8px; }
+.lightbox .lb-nav.next { right: 8px; }
+.lightbox .lb-count {
+  position: fixed; left: 0; right: 0; bottom: calc(12px + var(--safe-b));
+  z-index: 210; text-align: center; color: #fff; font-size: 0.85rem;
+  pointer-events: none; text-shadow: 0 1px 4px rgba(0,0,0,.6);
 }
 
 .member-pill {
@@ -1936,7 +1968,10 @@ function openExpenseModal(editId) {
         };
       });
       photoGrid.querySelectorAll('.photo-slot img').forEach(img => {
-        img.onclick = () => openLightbox(img.src);
+        img.onclick = () => {
+          const srcs = [...photoGrid.querySelectorAll('.photo-slot img')].map(x => x.src);
+          openLightbox(img.src, srcs);
+        };
       });
     };
     fileInput.onchange = async () => {
@@ -2208,12 +2243,40 @@ function openExpenseModal(editId) {
 }
 
 
-function openLightbox(src) {
+function openLightbox(src, srcs) {
+  const list = (Array.isArray(srcs) && srcs.length) ? srcs : [src];
+  let i = Math.max(0, list.indexOf(src));
   const el = document.createElement('div');
   el.className = 'lightbox';
-  el.innerHTML = `<button type="button" class="x" aria-label="關閉">×</button><img src="${src}" alt="收據">`;
-  el.querySelector('.x').onclick = () => el.remove();
-  el.onclick = (ev) => { if (ev.target === el) el.remove(); };
+  el.setAttribute('role', 'dialog');
+  el.setAttribute('aria-modal', 'true');
+  el.setAttribute('aria-label', '收據照片');
+  const nav = list.length > 1
+    ? `<button type="button" class="lb-nav prev" aria-label="上一張">‹</button><button type="button" class="lb-nav next" aria-label="下一張">›</button><div class="lb-count"></div>`
+    : '';
+  el.innerHTML = `<button type="button" class="x" aria-label="關閉">×</button>${nav}<img alt="收據">`;
+  const img = el.querySelector('img');
+  const show = () => {
+    img.src = list[i];
+    const c = el.querySelector('.lb-count');
+    if (c) c.textContent = `${i + 1} / ${list.length}`;
+  };
+  const close = () => {
+    document.removeEventListener('keydown', onKey);
+    el.remove();
+  };
+  const onKey = (ev) => {
+    if (ev.key === 'Escape') { ev.preventDefault(); close(); }
+    else if (list.length > 1 && ev.key === 'ArrowLeft') { i = (i + list.length - 1) % list.length; show(); }
+    else if (list.length > 1 && ev.key === 'ArrowRight') { i = (i + 1) % list.length; show(); }
+  };
+  const step = (d) => { i = (i + d + list.length) % list.length; show(); };
+  show();
+  el.querySelector('.x').onclick = (ev) => { ev.stopPropagation(); close(); };
+  el.querySelector('.lb-nav.prev')?.addEventListener('click', (ev) => { ev.stopPropagation(); step(-1); });
+  el.querySelector('.lb-nav.next')?.addEventListener('click', (ev) => { ev.stopPropagation(); step(1); });
+  el.onclick = (ev) => { if (ev.target === el) close(); };
+  document.addEventListener('keydown', onKey);
   document.body.appendChild(el);
 }
 
@@ -2299,7 +2362,10 @@ async function boot() {
     const t = ev.target.closest('[data-photo-view]');
     if (!t || !state.trip) return;
     const pid = t.getAttribute('data-photo-view');
-    openLightbox(`/api/trips/${state.trip.code}/photos/${pid}`);
+    const row = t.closest('.thumb-row') || t.parentElement;
+    const srcs = [...(row ? row.querySelectorAll('[data-photo-view]') : [])]
+      .map(n => `/api/trips/${state.trip.code}/photos/${n.getAttribute('data-photo-view')}`);
+    openLightbox(`/api/trips/${state.trip.code}/photos/${pid}`, srcs);
   });
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && state.trip) {
