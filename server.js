@@ -21,6 +21,13 @@ const MAX_PHOTOS_PER_EXPENSE = 3;
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '4mb' }));
+app.use((err, req, res, next) => {
+  if (err && (err.type === 'entity.too.large' || err.status === 413)) {
+    console.error('payload too large', req.method, req.path, err.message);
+    return res.status(413).json({ error: 'too_large', maxBytes: 4 * 1024 * 1024 });
+  }
+  return next(err);
+});
 app.use(express.static(path.join(__dirname, 'public'), {
   maxAge: process.env.NODE_ENV === 'production' ? '1h' : 0,
   etag: true,
@@ -475,14 +482,21 @@ app.post('/api/trips/:code/expenses/:expenseId/photos', async (req, res) => {
   const trip = getTrip(code);
   if (!trip) return res.status(404).json({ error: 'not_found' });
   const exp = (trip.expenses || []).find((e) => e.id === expenseId);
-  if (!exp) return res.status(404).json({ error: 'expense_not_found' });
+  if (!exp) {
+    console.error('photo upload: expense_not_found', code, expenseId);
+    return res.status(404).json({ error: 'expense_not_found' });
+  }
   const photoIds = Array.isArray(exp.photoIds) ? exp.photoIds : [];
   if (photoIds.length >= MAX_PHOTOS_PER_EXPENSE) {
     return res.status(400).json({ error: 'photo_limit', max: MAX_PHOTOS_PER_EXPENSE });
   }
   const parsed = parseDataUrl(req.body && req.body.dataUrl);
-  if (!parsed) return res.status(400).json({ error: 'invalid_image' });
+  if (!parsed) {
+    console.error('photo upload: invalid_image', code, expenseId);
+    return res.status(400).json({ error: 'invalid_image' });
+  }
   if (parsed.buf.length > MAX_PHOTO_BYTES) {
+    console.error('photo upload: too_large', code, parsed.buf.length);
     return res.status(413).json({ error: 'too_large', maxBytes: MAX_PHOTO_BYTES });
   }
   const id = uid();
@@ -501,7 +515,9 @@ app.post('/api/trips/:code/expenses/:expenseId/photos', async (req, res) => {
     if (row) await persistRow(code, row);
   } catch (e) {
     console.error('photo trip persist', e.message);
+    return res.status(500).json({ error: 'db_error' });
   }
+  console.log('photo saved', code, expenseId, id, parsed.buf.length, parsed.mime);
   res.status(201).json({ id, mime: parsed.mime, sizeBytes: parsed.buf.length, expenseId });
 });
 

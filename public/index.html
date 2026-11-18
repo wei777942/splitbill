@@ -296,8 +296,13 @@ input[readonly]:focus { border-color: var(--line); }
 .owed-toggle { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; min-height: 36px; padding: 6px 12px;
   border-radius: 12px; background: #ecfdf5; color: var(--accent); font-weight: 700; font-size: 0.85rem; }
 .owed-toggle.sm { min-height: 28px; padding: 3px 9px; font-size: 0.72rem; border-radius: 8px; margin-top: 4px; }
-.exp-owed { margin-top: 6px; padding: 7px 9px; border-radius: 10px; background: #f8fffe; font-size: 0.76rem; color: var(--muted); line-height: 1.5; }
-.exp-owed b { color: var(--ink); font-weight: 700; }
+.exp-owed { margin-top: 6px; padding: 4px 10px 8px; border-radius: 10px; background: #f8fffe; font-size: 0.8rem; color: var(--muted);
+  grid-column: 1 / -1; width: 100%; box-sizing: border-box; }
+.exp-owed-row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 6px 0; }
+.exp-owed-row + .exp-owed-row { border-top: 1px solid var(--line); }
+.exp-owed-row .nm { color: var(--ink); font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.exp-owed-row .am { color: var(--ink); font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.exp-owed .split { margin-top: 2px; padding-top: 6px; border-top: 1px solid var(--line); font-size: 0.7rem; color: var(--muted); }
 .expense .conv { color: var(--muted); font-size: 0.72rem; text-align: right; white-space: nowrap; margin-top: 1px; }
 .rate-tag { display: inline-block; margin-left: 4px; padding: 0 5px; border-radius: 6px; background: #ecfdf5; color: #047857; font-weight: 700; font-size: 0.68rem; }
 .rate-tag.warn { background: #fffbeb; color: #b45309; }
@@ -581,9 +586,10 @@ function splitBrief(exp) {
 function expOwedHtml(exp, trip) {
   const sh = computeShares(exp, trip);
   const home = trip.homeCurrency;
-  const lines = (trip.members || []).filter(m => m.id in sh)
-    .map(m => `${escapeHtml(m.name)} <b>${money(roundMoney(sh[m.id], home), home)}</b>`).join('　');
-  return `<div class="exp-owed">${lines}<br>${escapeHtml(splitSummary(exp, trip))}</div>`;
+  const rows = (trip.members || []).filter(m => m.id in sh)
+    .map(m => `<div class="exp-owed-row"><span class="nm">${escapeHtml(m.name)}</span><span class="am">${money(roundMoney(sh[m.id], home), home)}</span></div>`)
+    .join('');
+  return `<div class="exp-owed">${rows}<div class="split">${escapeHtml(splitSummary(exp, trip))}</div></div>`;
 }
 
 function needsRateCount(trip) {
@@ -648,6 +654,16 @@ function scheduleSave() {
   saveTimer = setTimeout(pushTrip, 350);
 }
 
+/** Flush a pending debounce and wait until the trip is on the server. */
+async function flushSave() {
+  if (applyingRemote || !state.trip) return;
+  saveGen += 1;
+  state.trip.updatedAt = Date.now();
+  cacheTrip(state.trip);
+  clearTimeout(saveTimer);
+  await pushTrip();
+}
+
 async function pushTrip() {
   if (!state.trip) return;
   const gen = saveGen;
@@ -672,11 +688,13 @@ async function pushTrip() {
     applyingRemote = false;
     cacheTrip(state.trip);
     state.sync = 'on';
+    return true;
   } catch (e) {
     if (e.status === 409 && e.data?.trip) {
       if (saveGen !== gen || (state.trip && state.trip.updatedAt > (e.data.trip.updatedAt || 0))) {
         clearTimeout(saveTimer);
         saveTimer = setTimeout(pushTrip, 200);
+        return false;
       } else {
         applyingRemote = true;
         state.trip = e.data.trip;
@@ -685,9 +703,11 @@ async function pushTrip() {
         state.sync = 'on';
         render();
         toast('已同步較新版本');
+        return true;
       }
     } else {
       state.sync = 'off';
+      return false;
     }
   }
   updateSyncDot();
@@ -1220,7 +1240,6 @@ function renderTrip() {
               <div class="title">${escapeHtml(expenseTitle(e))}</div>
               <div class="meta">${escapeHtml(memberName(e.payerId))} 付 · ${escapeHtml(splitBrief(e))}</div>
               <button type="button" class="owed-toggle sm" data-owed-exp="${e.id}" aria-expanded="${!!state.owedExp[e.id]}">各家應付 ${state.owedExp[e.id] ? '▾' : '▸'}</button>
-              ${state.owedExp[e.id] ? expOwedHtml(e, t) : ''}
               ${e.note ? `<div class="meta">📝 ${escapeHtml(e.note)}</div>` : ''}
               ${thumbs ? `<div class="thumb-row">${thumbs}</div>` : ''}
             </div>
@@ -1232,6 +1251,7 @@ function renderTrip() {
                 <button class="del" data-del-exp="${e.id}">刪除</button>
               </div>
             </div>
+            ${state.owedExp[e.id] ? expOwedHtml(e, t) : ''}
           </div>`;
         }).join('');
         return `<div class="day-group">
@@ -1858,13 +1878,13 @@ function openExpenseModal(editId) {
       <button type="button" class="owed-toggle sm" id="e-owed-toggle" aria-expanded="false" style="margin-top:0">各家應付 ▸</button>
       <span class="muted small" id="e-hint"></span>
     </div>
-    <p class="muted small hidden" id="e-owed" style="margin:6px 0 0"></p>
+    <div class="exp-owed hidden" id="e-owed" style="margin:6px 0 0"></div>
     <label class="field" style="margin-top:10px">備註（可空白）</label>
     <input type="text" id="e-note" maxlength="120" placeholder="例如：含小費" value="${escapeHtml(exp?.note || '')}">
     <div class="photo-editor">
       <label class="field">收據照片（最多 3 張）</label>
       <div class="grid" id="e-photos"></div>
-      <input type="file" id="e-photo-file" accept="image/*" capture="environment" class="hidden" multiple>
+      <input type="file" id="e-photo-file" accept="image/*" class="hidden" multiple>
       <p class="muted small" style="margin-top:6px">可拍照或從相簿選取，會自動壓縮後上傳</p>
     </div>
     <button class="btn block" style="margin-top:12px" id="e-save">${exp ? '儲存變更' : '新增'}</button>
@@ -1928,7 +1948,8 @@ function openExpenseModal(editId) {
           const dataUrl = await compressImageFile(f);
           pendingPhotos.push({ dataUrl });
         } catch (err) {
-          toast('圖片處理失敗');
+          const msg = err && err.message === 'unsupported' ? '這個圖片格式不支援，請改用 JPG 或 PNG' : '圖片處理失敗';
+          toast(msg);
         }
       }
       renderPhotoGrid();
@@ -2025,13 +2046,12 @@ function openExpenseModal(editId) {
         if (d.rate > 0 && d.amount > 0) parts.push(`≈ ${money(roundMoney(d.amount * d.rate, home), home)}`);
       }
       hint.textContent = parts.join(' · ');
-      let each = '';
       if (d.shares.length && d.amount > 0 && (d.currency === home || d.rate > 0)) {
-        const sh = computeShares(d, t);
-        each = t.members.filter(m => m.id in sh).map(m => `${m.name} ${fmtNum(sh[m.id], home)}`).join('、');
+        owedEl.innerHTML = expOwedHtml(d, t);
+      } else {
+        owedEl.innerHTML = '';
       }
-      owedEl.textContent = each ? `應分（${home}）：${each}` : '';
-      owedEl.classList.toggle('hidden', !(owedOpen && each));
+      owedEl.classList.toggle('hidden', !(owedOpen && owedEl.innerHTML));
     };
     modal.querySelector('#e-owed-toggle').onclick = (ev) => {
       owedOpen = !owedOpen;
@@ -2135,44 +2155,54 @@ function openExpenseModal(editId) {
       const uploadPending = async () => {
         for (const ph of pendingPhotos) {
           try {
-            const r = await fetch(`/api/trips/${t.code}/expenses/${payload.id}/photos`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ dataUrl: ph.dataUrl }),
-            });
-            if (!r.ok) {
-              const err = await r.json().catch(() => ({}));
-              throw new Error(err.error || 'upload');
+            let r, errBody;
+            for (let attempt = 0; attempt < 4; attempt++) {
+              r = await fetch(`/api/trips/${t.code}/expenses/${payload.id}/photos`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ dataUrl: ph.dataUrl }),
+              });
+              if (r.ok) break;
+              errBody = await r.json().catch(() => ({}));
+              if (r.status === 404 && attempt < 3) {
+                await flushSave();
+                await new Promise(res => setTimeout(res, 250 * (attempt + 1)));
+                continue;
+              }
+              throw new Error(errBody.error || 'upload');
             }
+            if (!r.ok) throw new Error((errBody && errBody.error) || 'upload');
             const j = await r.json();
             payload.photoIds = payload.photoIds || [];
             if (!payload.photoIds.includes(j.id)) payload.photoIds.push(j.id);
-            // refresh from server trip after saveTrip on server
+            const local = (state.trip?.expenses || []).find(e => e.id === payload.id);
+            if (local) local.photoIds = payload.photoIds;
           } catch (e) {
-            toast('照片上傳失敗');
+            const why = e && e.message && e.message !== 'upload' ? `（${e.message}）` : '';
+            toast('照片上傳失敗' + why);
           }
         }
       };
-      scheduleSave();
       closeModal();
       render();
       toast(exp ? '已更新' : '已記一筆');
-      if (pendingPhotos.length) {
-        uploadPending().then(async () => {
-          // pull latest so photoIds sync
-          try {
-            const r = await fetch(`/api/trips/${t.code}`);
-            if (r.ok) {
-              const fresh = await r.json();
-              if (fresh && fresh.updatedAt >= (state.trip.updatedAt || 0)) {
-                state.trip = fresh;
-                cacheTrip(state.trip);
-                render();
-              }
+      const afterSave = pendingPhotos.length
+        ? flushSave().then(uploadPending)
+        : Promise.resolve(scheduleSave());
+      afterSave.then(async () => {
+        if (!pendingPhotos.length) return;
+        try {
+          const r = await fetch(`/api/trips/${t.code}`);
+          if (r.ok) {
+            const fresh = await r.json();
+            if (fresh && fresh.updatedAt >= (state.trip.updatedAt || 0)) {
+              state.trip = fresh;
+              cacheTrip(state.trip);
+              render();
             }
-          } catch (_) {}
-        });
-      }
+          }
+        } catch (_) {}
+      });
     };
   });
 }
@@ -2187,9 +2217,30 @@ function openLightbox(src) {
   document.body.appendChild(el);
 }
 
+async function decodeImage(file) {
+  if (typeof createImageBitmap === 'function') {
+    try { return await createImageBitmap(file); } catch (_) {}
+  }
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error('unsupported'));
+      el.src = url;
+    });
+    return img;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 async function compressImageFile(file, maxEdge = 1280, quality = 0.7, targetBytes = 300 * 1024) {
-  const bitmap = await createImageBitmap(file);
+  let bitmap;
+  try { bitmap = await decodeImage(file); }
+  catch (e) { throw new Error(e && e.message === 'unsupported' ? 'unsupported' : 'unsupported'); }
   let w = bitmap.width, h = bitmap.height;
+  if (!(w > 0 && h > 0)) throw new Error('unsupported');
   const scale = Math.min(1, maxEdge / Math.max(w, h));
   w = Math.max(1, Math.round(w * scale));
   h = Math.max(1, Math.round(h * scale));
@@ -2197,7 +2248,7 @@ async function compressImageFile(file, maxEdge = 1280, quality = 0.7, targetByte
   canvas.width = w; canvas.height = h;
   const ctx = canvas.getContext('2d');
   ctx.drawImage(bitmap, 0, 0, w, h);
-  bitmap.close && bitmap.close();
+  if (bitmap.close) bitmap.close();
   let q = quality;
   let blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', q));
   while (blob && blob.size > targetBytes && q > 0.35) {
@@ -2206,12 +2257,18 @@ async function compressImageFile(file, maxEdge = 1280, quality = 0.7, targetByte
   }
   if (!blob) throw new Error('compress');
   // If still huge, shrink further
-  if (blob.size > targetBytes) {
-    const scale2 = Math.sqrt(targetBytes / blob.size) * 0.95;
-    canvas.width = Math.max(1, Math.round(w * scale2));
-    canvas.height = Math.max(1, Math.round(h * scale2));
-    ctx.drawImage(await createImageBitmap(blob), 0, 0, canvas.width, canvas.height);
-    blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.65));
+  let guard = 0;
+  while (blob.size > targetBytes && guard < 4) {
+    const scale2 = Math.min(0.85, Math.sqrt(targetBytes / blob.size) * 0.95);
+    w = Math.max(1, Math.round(canvas.width * scale2));
+    h = Math.max(1, Math.round(canvas.height * scale2));
+    const src = await createImageBitmap(blob);
+    canvas.width = w; canvas.height = h;
+    ctx.drawImage(src, 0, 0, w, h);
+    if (src.close) src.close();
+    blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.6));
+    if (!blob) throw new Error('compress');
+    guard += 1;
   }
   if (!blob || blob.size > 350 * 1024) throw new Error('too_large');
   return await new Promise((resolve, reject) => {
