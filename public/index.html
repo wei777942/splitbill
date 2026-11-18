@@ -957,6 +957,12 @@ function openMemberSheet() {
   `, (modal) => {
     mountMemberEditor(modal.querySelector('#member-editor'), list, { usedIds: used });
     modal.querySelector('#m-done').onclick = () => {
+      // Re-read: a sync may have replaced state.trip while the sheet was open.
+      const t = state.trip;
+      const usedNow = new Set();
+      (t.expenses || []).forEach(e => { usedNow.add(e.payerId); (e.shares || []).forEach(x => usedNow.add(x.memberId)); });
+      const keep = new Set(list.filter(x => (x.name || '').trim()).map(x => x.id));
+      if ((t.members || []).some(m => usedNow.has(m.id) && !keep.has(m.id))) { toast('有支出用到的成員不能刪除'); return; }
       const err = validateMembers(list);
       if (err) { toast(err); return; }
       const byId = {};
@@ -1668,6 +1674,7 @@ function openSettings() {
       render();
     };
     modal.querySelector('#s-save').onclick = () => {
+      const t = state.trip; // re-read: a sync may have replaced it while the sheet was open
       t.name = modal.querySelector('#s-name').value.trim() || t.name;
       t.localCurrency = modal.querySelector('#s-local').value;
       t.homeCurrency = modal.querySelector('#s-home').value;
@@ -1998,6 +2005,7 @@ function openExpenseModal(editId) {
     else rateWrap.classList.add('hidden');
 
     modal.querySelector('#e-save').onclick = () => {
+      const t = state.trip; // re-read: a sync may have replaced it while the sheet was open
       const title = modal.querySelector('#e-title').value.trim();
       const currency = curSel.value;
       const payerId = modal.querySelector('#e-payer').value;
@@ -2050,7 +2058,7 @@ function openExpenseModal(editId) {
       payload.photoIds = [...existingPhotoIds];
       if (exp) {
         const idx = t.expenses.findIndex(e => e.id === exp.id);
-        t.expenses[idx] = payload;
+        if (idx >= 0) t.expenses[idx] = payload; else t.expenses.push(payload);
       } else {
         t.expenses.push(payload);
       }
