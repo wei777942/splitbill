@@ -20,3 +20,11 @@ npm start
 ## Deploy
 
 Render free web service (Node). Build: `npm install`. Start: `npm start`.
+
+## UI rules (from user feedback — keep)
+
+- Buttons never wrap their text (`white-space: nowrap`).
+- No inline destructive × on chips. Member chips on the trip card are display-only; edits/deletes go through 「編輯成員」 (delete asks to confirm and is blocked if the member is used in an expense).
+- Expense list: date tabs, tinted date bands, thin dividers only between items, inline 編輯/刪除, untitled → 「X 付的支出」.
+- Both default trip currencies are TWD (editable in settings).
+- Test at iPhone size (390×844) before shipping.
