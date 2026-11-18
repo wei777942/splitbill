@@ -7,6 +7,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const { Pool } = require('pg');
 const ghStore = require('./githubStore');
+const botRates = require('./botRates');
 
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
@@ -316,6 +317,22 @@ app.get('/api/rate', async (req, res) => {
   } catch (e) {
     return res.status(502).json({ error: 'rate_unavailable', message: String(e.message || e) });
   }
+});
+
+/** Bank of Taiwan cash-selling rate (TWD per unit) for a date. ?currency=JPY&date=YYYY-MM-DD */
+app.get('/api/bot-rate', async (req, res) => {
+  try {
+    const r = await botRates.getRate(req.query.currency || 'JPY', req.query.date, req.query.kind === 'spotSell' ? 'spotSell' : 'cashSell');
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    res.json(r);
+  } catch (e) {
+    res.status(e.code === 'rate_not_found' ? 404 : 502).json({ error: e.code || 'rate_unavailable', message: String(e.message || e) });
+  }
+});
+
+app.get('/vendor/exceljs.min.js', (_req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=604800');
+  res.sendFile(require.resolve('exceljs/dist/exceljs.min.js'));
 });
 
 app.get('/api/health', async (_req, res) => {
