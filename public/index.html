@@ -55,6 +55,7 @@ button { cursor: pointer; border: none; background: none; }
 .grow { flex: 1; min-width: 0; }
 label.field { display: block; font-size: 0.78rem; color: var(--muted); margin-bottom: 4px; }
 input[type=text], input[type=number], input[type=date], select, textarea {
+  font-size: 16px;
   width: 100%; padding: 11px 12px; border-radius: 12px; border: 1.5px solid var(--line);
   background: #f8fffe; outline: none;
 }
@@ -165,8 +166,9 @@ input[readonly]:focus { border-color: var(--line); }
   background: #f8fffe; border: 1.5px solid var(--line);
 }
 .check-item.on { border-color: var(--accent); background: #ecfdf5; }
-.check-item input { width: 18px; height: 18px; accent-color: var(--accent); }
-.check-item .custom-amt { width: 110px; margin-left: auto; padding: 8px; }
+.check-item input[type=checkbox] { width: 20px; height: 20px; flex: 0 0 20px; accent-color: var(--accent); }
+.check-item .nm { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; cursor: pointer; min-height: 44px; }
+.check-item .custom-amt { width: 112px; margin-left: auto; padding: 0 10px; height: 44px; min-height: 44px; text-align: right; background: #fff; }
 .seg {
   display: flex; background: #ecfdf5; border-radius: 12px; padding: 3px; gap: 3px;
 }
@@ -279,10 +281,23 @@ input[readonly]:focus { border-color: var(--line); }
 .btn-addrow { width: 100%; min-height: 44px; margin-top: 10px; border-radius: 12px; border: 1.5px dashed var(--accent);
   background: #f0fdfa; color: var(--accent); font-weight: 700; white-space: nowrap; }
 .btn, .chip, .date-tab, .seg button { white-space: nowrap; }
-.check-item .ratio-inp { width: 80px; margin-left: auto; padding: 8px; }
+.check-item .ratio-inp { width: 84px; margin-left: auto; padding: 0 10px; height: 44px; min-height: 44px; text-align: right; background: #fff; }
 .seg4 button { padding: 9px 2px; font-size: 0.86rem; }
-.rate-box { margin-top: 10px; padding: 10px 12px; border-radius: 12px; background: #fffbeb; border: 1.5px solid #fde68a; }
-.rate-box input { background: #fff; }
+.amt-row { display: grid; grid-template-columns: minmax(0,1fr) 78px 104px; gap: 8px; margin-top: 10px; align-items: end; }
+.amt-row.no-rate { grid-template-columns: minmax(0,1fr) 96px; }
+.amt-row label.field { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.amt-row input, .amt-row select { height: 46px; min-height: 46px; padding: 0 10px; font-size: 1rem; }
+.amt-row #e-amount { font-size: 1.15rem; font-weight: 700; }
+.amt-row select { padding-right: 4px; }
+.amt-row #e-amount.auto { background: #fffbeb; border: 1.5px dashed #f59e0b; color: #b45309; }
+.rate-chip { position: relative; }
+.rate-chip .x { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--muted); font-weight: 700; pointer-events: none; }
+.rate-chip input { padding-left: 24px; text-align: right; font-size: 0.9rem; font-variant-numeric: tabular-nums; background: #fffbeb; border-color: #fde68a; }
+.owed-toggle { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; min-height: 36px; padding: 6px 12px;
+  border-radius: 12px; background: #ecfdf5; color: var(--accent); font-weight: 700; font-size: 0.85rem; }
+.owed-toggle.sm { min-height: 28px; padding: 3px 9px; font-size: 0.72rem; border-radius: 8px; margin-top: 4px; }
+.exp-owed { margin-top: 6px; padding: 7px 9px; border-radius: 10px; background: #f8fffe; font-size: 0.76rem; color: var(--muted); line-height: 1.5; }
+.exp-owed b { color: var(--ink); font-weight: 700; }
 .expense .conv { color: var(--muted); font-size: 0.72rem; text-align: right; white-space: nowrap; margin-top: 1px; }
 .rate-tag { display: inline-block; margin-left: 4px; padding: 0 5px; border-radius: 6px; background: #ecfdf5; color: #047857; font-weight: 700; font-size: 0.68rem; }
 .rate-tag.warn { background: #fffbeb; color: #b45309; }
@@ -322,6 +337,8 @@ let state = {
   editingExpenseId: null,
   recentCodes: [],
   expenseDateFilter: 'all', // 'all' | YYYY-MM-DD
+  owedOpen: false, // 各家應付 (summary + per-day) — collapsed by default
+  owedExp: {}, // expense id -> true when its per-person amounts are expanded
 };
 /** Names staged on the home create form (not yet a trip). */
 let homeDraftMembers = [];
@@ -343,6 +360,19 @@ function uid() {
 }
 
 function $(sel, el) { return (el || document).querySelector(sel); }
+/** Decimal text field for phones: type=text + inputmode=decimal (type=number silently drops IME / full-width / comma input on iOS). */
+function numField(inp) {
+  inp.setAttribute('inputmode', 'decimal');
+  inp.setAttribute('autocomplete', 'off');
+  inp.addEventListener('input', () => {
+    const FW = '０１２３４５６７８９';
+    let v = inp.value.replace(/[０-９]/g, c => String(FW.indexOf(c))).replace(/[。．,，]/g, c => (c === ',' || c === '，') ? '' : '.');
+    v = v.replace(/[^0-9.]/g, '');
+    const i = v.indexOf('.');
+    if (i >= 0) v = v.slice(0, i + 1) + v.slice(i + 1).replace(/\./g, '');
+    if (v !== inp.value) inp.value = v;
+  }, true);
+}
 function el(html) {
   const t = document.createElement('template');
   t.innerHTML = html.trim();
@@ -540,6 +570,20 @@ function splitSummary(exp, trip) {
   let extra = '';
   if (exp.splitType === 'headcount' || exp.splitType === 'ratio') extra = `（${w.join(':')}）`;
   return `${SPLIT_LABEL[exp.splitType] || "均分"}：${names || "—"}${extra}`;
+}
+
+/** Short split label for the list row (no per-person detail). */
+function splitBrief(exp) {
+  const sh = exp.shares || [];
+  if (sh.length === 1 && sh[0].memberId === exp.payerId) return '自付';
+  return SPLIT_LABEL[exp.splitType] || '均分';
+}
+function expOwedHtml(exp, trip) {
+  const sh = computeShares(exp, trip);
+  const home = trip.homeCurrency;
+  const lines = (trip.members || []).filter(m => m.id in sh)
+    .map(m => `${escapeHtml(m.name)} <b>${money(roundMoney(sh[m.id], home), home)}</b>`).join('　');
+  return `<div class="exp-owed">${lines}<br>${escapeHtml(splitSummary(exp, trip))}</div>`;
 }
 
 function needsRateCount(trip) {
@@ -1127,7 +1171,10 @@ function renderTrip() {
       <div class="t"><div class="n">${money(roundMoney(totalHomeApprox, t.homeCurrency), t.homeCurrency)}</div><div class="l">支出合計（${t.homeCurrency}）</div></div>
       <div class="t"><div class="n">${(t.expenses||[]).length}</div><div class="l">筆支出 · ${Object.keys(totals).map(c=>c).join('/')||'—'}</div></div>
     </div>
-    ${(t.expenses || []).length && (t.members || []).length ? `<div style="margin-top:10px">${renderSummaryTable(t, { note: false })}</div>` : ''}
+    ${(t.expenses || []).length && (t.members || []).length ? `<div style="margin-top:10px">
+      <button type="button" class="owed-toggle" data-owed-toggle aria-expanded="${state.owedOpen}">各家應付 ${state.owedOpen ? '▾' : '▸'}</button>
+      ${state.owedOpen ? `<div style="margin-top:8px">${renderSummaryTable(t, { note: false })}</div>` : ''}
+    </div>` : ''}
   </div>
   <div class="card">
     <div class="row" style="justify-content:space-between;margin-bottom:4px">
@@ -1161,7 +1208,7 @@ function renderTrip() {
         const items = byDate[day].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
         const dayHome = items.reduce((s, e) => s + homeAmountOf(e, t), 0);
         const personLines = dayPersonSpend(items, t);
-        const detail = active !== 'all'
+        const detail = active !== 'all' && state.owedOpen
           ? `<div class="day-person">${personLines.map(l => `<div>${l}</div>`).join('') || '<div>尚無分攤</div>'}</div>`
           : '';
         const rows = items.map(e => {
@@ -1171,7 +1218,9 @@ function renderTrip() {
           return `<div class="expense" data-exp="${e.id}">
             <div>
               <div class="title">${escapeHtml(expenseTitle(e))}</div>
-              <div class="meta">${escapeHtml(memberName(e.payerId))} 付 · ${escapeHtml(splitSummary(e, t))}</div>
+              <div class="meta">${escapeHtml(memberName(e.payerId))} 付 · ${escapeHtml(splitBrief(e))}</div>
+              <button type="button" class="owed-toggle sm" data-owed-exp="${e.id}" aria-expanded="${!!state.owedExp[e.id]}">各家應付 ${state.owedExp[e.id] ? '▾' : '▸'}</button>
+              ${state.owedExp[e.id] ? expOwedHtml(e, t) : ''}
               ${e.note ? `<div class="meta">📝 ${escapeHtml(e.note)}</div>` : ''}
               ${thumbs ? `<div class="thumb-row">${thumbs}</div>` : ''}
             </div>
@@ -1608,6 +1657,16 @@ function bind() {
       render();
     });
   });
+  const keepScroll = (fn) => { const y = window.scrollY; fn(); render(); window.scrollTo(0, y); };
+  document.querySelectorAll('[data-owed-toggle]').forEach(b => {
+    b.addEventListener('click', () => keepScroll(() => { state.owedOpen = !state.owedOpen; }));
+  });
+  document.querySelectorAll('[data-owed-exp]').forEach(b => {
+    b.addEventListener('click', () => keepScroll(() => {
+      const id = b.getAttribute('data-owed-exp');
+      if (state.owedExp[id]) delete state.owedExp[id]; else state.owedExp[id] = true;
+    }));
+  });
   $('#btn-add-exp')?.addEventListener('click', () => openExpenseModal(null));
   document.querySelectorAll('[data-edit-exp]').forEach(b => {
     b.addEventListener('click', () => openExpenseModal(b.getAttribute('data-edit-exp')));
@@ -1712,17 +1771,6 @@ async function getBotRate(cur, date, home) {
   const b = await botRateOne(home, date);
   return { ...a, rate: Number((a.rate / b.rate).toPrecision(6)), cross: true, provisional: !!(a.provisional || b.provisional) };
 }
-function rateStatusText(st) {
-  if (!st) return '';
-  if (st.manual) return '手動輸入';
-  if (st.loading) return '抓台銀匯率中…';
-  if (st.error) return '抓不到台銀匯率，請手動輸入';
-  if (!st.rateDate) return '';
-  const md = st.rateDate.slice(5).replace('-', '/');
-  if (st.provisional) return `暫定：用今天（${md}）台銀現金賣出，當天會自動更新`;
-  return `台銀 ${md} 現金賣出${st.cross ? '（換算）' : ''}${st.fallback ? '（前一營業日）' : ''}`;
-}
-
 /** After loading a trip from the server: replace provisional rates whose date has arrived. */
 async function refreshProvisionalRates() {
   const t = state.trip;
@@ -1769,25 +1817,21 @@ function openExpenseModal(editId) {
     <input type="text" id="e-title" maxlength="80" placeholder="例如：晚餐" value="${escapeHtml(exp?.title || '')}">
     <label class="field" style="margin-top:10px">日期</label>
     <input type="date" id="e-date" value="${defaultDate}">
-    <div class="row" style="margin-top:10px;gap:10px">
-      <div class="grow">
-        <label class="field">金額</label>
-        <input type="number" id="e-amount" step="any" min="0" inputmode="decimal" value="${exp ? exp.amount : ''}">
+    <div class="amt-row ${defaultCurrency === home ? 'no-rate' : ''}" id="e-amt-row">
+      <div>
+        <label class="field" id="e-amount-label">金額</label>
+        <input type="text" id="e-amount" inputmode="decimal" autocomplete="off" enterkeyhint="done" placeholder="0" value="${exp ? exp.amount : ''}">
       </div>
-      <div style="width:110px">
+      <div>
         <label class="field">幣別</label>
         <select id="e-cur">
           ${curOptions.map(c => `<option value="${c}" ${defaultCurrency===c?'selected':''}>${c}</option>`).join('')}
         </select>
       </div>
-    </div>
-    <div id="e-rate-wrap" class="rate-box">
-      <label class="field" id="e-rate-label">匯率</label>
-      <div class="row" style="gap:8px">
-        <input class="grow" type="number" id="e-rate" step="any" min="0" inputmode="decimal" value="${exp && Number(exp.rate) > 0 ? exp.rate : ''}">
-        <button type="button" class="btn secondary" id="e-rate-bot" style="padding:8px 12px;min-height:40px">用台銀</button>
+      <div id="e-rate-col" class="${defaultCurrency === home ? 'hidden' : ''}">
+        <label class="field" id="e-rate-label">匯率</label>
+        <div class="rate-chip"><span class="x">×</span><input type="text" id="e-rate" inputmode="decimal" autocomplete="off" aria-label="匯率" value="${exp && Number(exp.rate) > 0 ? exp.rate : ''}"></div>
       </div>
-      <p class="small" id="e-rate-src" style="margin:6px 0 0;color:#047857"></p>
     </div>
     <label class="field" style="margin-top:10px">誰付的</label>
     <select id="e-payer">
@@ -1801,17 +1845,20 @@ function openExpenseModal(editId) {
     <div class="check-grid" id="e-shares">
       ${t.members.map(m => {
         const on = selected.has(m.id);
-        return `<label class="check-item ${on?'on':''}" data-mid="${m.id}">
-          <input type="checkbox" ${on?'checked':''}>
-          <span class="grow">${escapeHtml(m.name)} <span class="hc">${memberHeadcount(m)}人</span></span>
-          <input type="number" class="custom-amt hidden" step="any" min="0" inputmode="decimal"
+        return `<div class="check-item ${on?'on':''}" data-mid="${m.id}">
+          <label class="nm"><input type="checkbox" ${on?'checked':''}><span>${escapeHtml(m.name)} <span class="hc">${memberHeadcount(m)}人</span></span></label>
+          <input type="text" class="custom-amt hidden" inputmode="decimal" autocomplete="off"
             placeholder="金額" value="${customMap[m.id] != null ? customMap[m.id] : ''}" ${on?'':'disabled'}>
-          <input type="number" class="ratio-inp hidden" step="any" min="0" inputmode="decimal"
+          <input type="text" class="ratio-inp hidden" inputmode="decimal" autocomplete="off"
             placeholder="比例" value="${ratioMap[m.id] != null ? ratioMap[m.id] : 1}" ${on?'':'disabled'}>
-        </label>`;
+        </div>`;
       }).join('')}
     </div>
-    <p class="muted small" id="e-hint" style="margin-top:8px"></p>
+    <div style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <button type="button" class="owed-toggle sm" id="e-owed-toggle" aria-expanded="false" style="margin-top:0">各家應付 ▸</button>
+      <span class="muted small" id="e-hint"></span>
+    </div>
+    <p class="muted small hidden" id="e-owed" style="margin:6px 0 0"></p>
     <label class="field" style="margin-top:10px">備註（可空白）</label>
     <input type="text" id="e-note" maxlength="120" placeholder="例如：含小費" value="${escapeHtml(exp?.note || '')}">
     <div class="photo-editor">
@@ -1888,28 +1935,31 @@ function openExpenseModal(editId) {
     };
     renderPhotoGrid();
     const amountInput = modal.querySelector('#e-amount');
-    const amountLabel = amountInput.closest('.grow')?.querySelector('label.field');
+    const amountLabel = modal.querySelector('#e-amount-label');
     const curSel = modal.querySelector('#e-cur');
     const dateInp = modal.querySelector('#e-date');
     const rateInp = modal.querySelector('#e-rate');
-    const rateWrap = modal.querySelector('#e-rate-wrap');
-    const rateSrc = modal.querySelector('#e-rate-src');
+    const rateCol = modal.querySelector('#e-rate-col');
+    const amtRow = modal.querySelector('#e-amt-row');
+    const rateLabel = modal.querySelector('#e-rate-label');
+    [amountInput, rateInp, ...modal.querySelectorAll('.custom-amt, .ratio-inp')].forEach(numField);
     let rateSt = exp && Number(exp.rate) > 0
       ? { manual: !!exp.rateManual, rateDate: exp.rateDate, provisional: !!exp.rateProvisional, source: exp.rateSource,
           fallback: exp.rateDate && exp.rateDate !== expenseDate(exp) && !exp.rateProvisional }
       : null;
     let rateToken = 0;
     const showRateStatus = () => {
-      rateSrc.textContent = rateStatusText(rateSt);
-      rateSrc.style.color = rateSt && (rateSt.provisional || rateSt.error) ? '#b45309' : rateSt && rateSt.manual ? 'var(--muted)' : '#047857';
+      rateLabel.textContent = rateSt && rateSt.manual ? '匯率·手動' : '匯率';
+      rateInp.placeholder = rateSt && rateSt.loading ? '…' : '';
+      updateHint();
     };
     const currentRate = () => curSel.value === home ? 1 : (parseFloat(rateInp.value) || 0);
     const autoRate = async (force) => {
       const cur = curSel.value;
-      if (cur === home) { rateWrap.classList.add('hidden'); updateHint(); return; }
-      rateWrap.classList.remove('hidden');
-      modal.querySelector('#e-rate-label').textContent = `匯率（1 ${cur} = ? ${home}）`;
-      if (rateSt && rateSt.manual && !force) { showRateStatus(); updateHint(); return; }
+      amtRow.classList.toggle('no-rate', cur === home);
+      rateCol.classList.toggle('hidden', cur === home);
+      if (cur === home) { updateHint(); return; }
+      if (rateSt && rateSt.manual && !force) { showRateStatus(); return; }
       const my = ++rateToken;
       rateSt = { loading: true };
       showRateStatus();
@@ -1925,19 +1975,27 @@ function openExpenseModal(editId) {
         if (!rateInp.value && cur === t.localCurrency && Number(t.rate) > 0) rateInp.value = t.rate;
       }
       showRateStatus();
-      updateHint();
     };
-    rateInp.oninput = () => { rateToken++; rateSt = { manual: true }; showRateStatus(); updateHint(); };
-    modal.querySelector('#e-rate-bot').onclick = () => autoRate(true);
+    // Editing the rate by hand = manual; clearing it goes back to the Bank of Taiwan rate.
+    rateInp.oninput = () => {
+      if (!rateInp.value.trim()) { rateSt = null; autoRate(true); return; }
+      rateToken++; rateSt = { manual: true }; showRateStatus();
+    };
     const checkedRows = () => [...modal.querySelectorAll('.check-item')].filter(x => x.querySelector('input[type=checkbox]').checked);
     const customSum = () => checkedRows().reduce((a, row) => a + (parseFloat(row.querySelector('.custom-amt').value) || 0), 0);
     const syncAmountField = () => {
       if (mode === 'custom') {
         amountInput.readOnly = true;
+        amountInput.classList.add('auto');
+        amountInput.setAttribute('inputmode', 'none');
         amountInput.value = String(roundMoney(customSum(), curSel.value));
-        if (amountLabel) amountLabel.textContent = '金額（自訂加總）';
+        if (amountLabel) amountLabel.textContent = '合計（自動加總）';
       } else {
+        const was = amountInput.readOnly;
         amountInput.readOnly = false;
+        amountInput.classList.remove('auto');
+        amountInput.setAttribute('inputmode', 'decimal');
+        if (was) amountInput.value = ''; // drop the old auto-sum so a typed total starts clean
         if (amountLabel) amountLabel.textContent = '金額';
       }
     };
@@ -1953,21 +2011,33 @@ function openExpenseModal(editId) {
         ratio: parseFloat(row.querySelector('.ratio-inp').value) || 0,
       })),
     });
+    let owedOpen = false;
     const updateHint = () => {
       const hint = modal.querySelector('#e-hint');
+      const owedEl = modal.querySelector('#e-owed');
       const d = draftExpense();
-      if (!d.shares.length) { hint.textContent = '請勾選分攤的成員'; return; }
       const parts = [];
-      if (mode === 'custom') parts.push(`總額自動加總：${roundMoney(d.amount, d.currency)} ${d.currency}`);
+      if (!d.shares.length) parts.push('請勾選分攤的成員');
       if (d.currency !== home) {
+        if (rateSt && rateSt.loading) parts.push('匯率取得中…');
+        else if (rateSt && rateSt.error && !(d.rate > 0)) parts.push('抓不到匯率，請點右上匯率欄手動填');
+        else if (rateSt && rateSt.provisional && !rateSt.manual) parts.push('暫定匯率');
         if (d.rate > 0 && d.amount > 0) parts.push(`≈ ${money(roundMoney(d.amount * d.rate, home), home)}`);
       }
-      if (d.amount > 0 && (d.currency === home || d.rate > 0)) {
-        const sh = computeShares(d, t);
-        const each = t.members.filter(m => m.id in sh).map(m => `${m.name} ${fmtNum(sh[m.id], home)}`).join('、');
-        parts.push(`應分（${home}）：${each}`);
-      }
       hint.textContent = parts.join(' · ');
+      let each = '';
+      if (d.shares.length && d.amount > 0 && (d.currency === home || d.rate > 0)) {
+        const sh = computeShares(d, t);
+        each = t.members.filter(m => m.id in sh).map(m => `${m.name} ${fmtNum(sh[m.id], home)}`).join('、');
+      }
+      owedEl.textContent = each ? `應分（${home}）：${each}` : '';
+      owedEl.classList.toggle('hidden', !(owedOpen && each));
+    };
+    modal.querySelector('#e-owed-toggle').onclick = (ev) => {
+      owedOpen = !owedOpen;
+      ev.currentTarget.textContent = `各家應付 ${owedOpen ? '▾' : '▸'}`;
+      ev.currentTarget.setAttribute('aria-expanded', String(owedOpen));
+      updateHint();
     };
     const syncModeUI = () => {
       modal.querySelectorAll('.custom-amt').forEach(inp => inp.classList.toggle('hidden', mode !== 'custom'));
@@ -1997,12 +2067,11 @@ function openExpenseModal(editId) {
     });
     amountInput.oninput = updateHint;
     modal.querySelector('#e-payer').onchange = updateHint;
-    curSel.onchange = () => { if (mode === 'custom') syncAmountField(); if (rateSt && rateSt.manual) rateSt = null; autoRate(false); };
+    curSel.onchange = () => { if (mode === 'custom') syncAmountField(); if (rateSt && rateSt.manual) rateSt = null; rateInp.value = ''; autoRate(false); };
     dateInp.onchange = () => autoRate(false);
     syncModeUI();
     if (curSel.value !== home && !(exp && Number(exp.rate) > 0)) autoRate(false);
-    else if (curSel.value !== home) { modal.querySelector('#e-rate-label').textContent = `匯率（1 ${curSel.value} = ? ${home}）`; showRateStatus(); }
-    else rateWrap.classList.add('hidden');
+    else if (curSel.value !== home) showRateStatus();
 
     modal.querySelector('#e-save').onclick = () => {
       const t = state.trip; // re-read: a sync may have replaced it while the sheet was open

@@ -28,3 +28,7 @@ Render free web service (Node). Build: `npm install`. Start: `npm start`.
 - Expense list: date tabs, tinted date bands, thin dividers only between items, inline 編輯/刪除, untitled → 「X 付的支出」.
 - Both default trip currencies are TWD (editable in settings).
 - Test at iPhone size (390×844) before shipping.
+- Per-member owed/paid/balance figures (trip summary, per-day detail, per-expense shares, and the sheet preview) are collapsed by default behind 「各家應付 ▸」; the 結算 page always shows the full result.
+- 記一筆: amount, currency and rate sit on ONE row (金額 | 幣別 | × 匯率). The rate chip is hidden for the home currency; tapping it edits (manual), clearing it returns to the Bank of Taiwan rate.
+- Number fields are `type=text inputmode=decimal` (never type=number) and ≥16px; inputs must never sit inside a `<label>` with other controls; don't size inputs via generic `.check-item input` rules (it squashed per-person amount fields to 18px).
+- Test in WebKit with devices['iPhone 13'] and tap(), not click().
