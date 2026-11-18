@@ -256,6 +256,29 @@ input[readonly]:focus { border-color: var(--line); }
 .hc.dim { background: #f1f5f9; color: var(--muted); }
 .hc-input { width: 64px !important; flex: 0 0 64px; text-align: center; padding: 10px 6px !important; }
 .member-edit { display: flex; gap: 8px; align-items: center; }
+.mhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.mhead .muted { font-size: 0.78rem; }
+.btn-mini { display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; flex: 0 0 auto;
+  min-height: 36px; padding: 6px 12px; border-radius: 12px; background: #ecfdf5; color: var(--accent); font-weight: 700; font-size: 0.85rem; }
+.mchips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.mchip { display: inline-flex; align-items: center; padding: 7px 12px; border-radius: 999px; background: #ecfdf5;
+  font-weight: 600; font-size: 0.9rem; white-space: nowrap; }
+.mchip .n { color: #b45309; font-weight: 700; margin-left: 4px; font-size: 0.82rem; }
+.mlist { display: grid; gap: 8px; }
+.mlist-head { display: grid; grid-template-columns: 1fr 132px 44px; gap: 8px; font-size: 0.72rem; color: var(--muted); padding: 0 2px; }
+.mlist-head span:nth-child(2) { text-align: center; }
+.mrow { display: grid; grid-template-columns: 1fr 132px 44px; gap: 8px; align-items: center; }
+.mrow .m-name { height: 44px; min-height: 44px; padding: 0 12px; }
+.stepper { display: grid; grid-template-columns: 44px 1fr 44px; align-items: center; height: 44px;
+  border: 1.5px solid var(--line); border-radius: 12px; background: #f8fffe; overflow: hidden; }
+.stepper button { height: 44px; font-size: 1.25rem; font-weight: 700; color: var(--accent); }
+.stepper button:disabled { color: #cbd5e1; }
+.stepper .n { text-align: center; font-weight: 700; font-variant-numeric: tabular-nums; }
+.m-del { width: 44px; height: 44px; border-radius: 12px; background: #f1f5f9; color: #94a3b8; display: grid; place-items: center; }
+.m-del svg { width: 18px; height: 18px; }
+.btn-addrow { width: 100%; min-height: 44px; margin-top: 10px; border-radius: 12px; border: 1.5px dashed var(--accent);
+  background: #f0fdfa; color: var(--accent); font-weight: 700; white-space: nowrap; }
+.btn, .chip, .date-tab, .seg button { white-space: nowrap; }
 .check-item .ratio-inp { width: 80px; margin-left: auto; padding: 8px; }
 .seg4 button { padding: 9px 2px; font-size: 0.86rem; }
 .rate-box { margin-top: 10px; padding: 10px 12px; border-radius: 12px; background: #fffbeb; border: 1.5px solid #fde68a; }
@@ -856,12 +879,109 @@ function expenseRunningTotals(trip) {
 }
 
 /* ========== Render ========== */
+/* ========== Member row editor ========== */
+const TRASH_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>';
+function memberRowsHtml(list) {
+  if (!list.length) return '<p class="muted small" style="margin:4px 2px">還沒有成員，按下方新增</p>';
+  return `<div class="mlist-head"><span>名稱</span><span>人數</span><span></span></div>` + list.map(m => `
+    <div class="mrow" data-mid="${m.id}">
+      <input type="text" class="m-name" maxlength="24" placeholder="例如：士堯家" enterkeyhint="next" value="${escapeHtml(m.name)}">
+      <div class="stepper"><button type="button" data-step="-1" aria-label="減少" ${memberHeadcount(m) <= 1 ? 'disabled' : ''}>−</button><span class="n">${memberHeadcount(m)}</span><button type="button" data-step="1" aria-label="增加">+</button></div>
+      <button type="button" class="m-del" aria-label="刪除 ${escapeHtml(m.name)}">${TRASH_SVG}</button>
+    </div>`).join('');
+}
+/** Edits `list` (array of {id,name,headcount}) in place. usedIds: members referenced by expenses. */
+function mountMemberEditor(root, list, opts = {}) {
+  const listEl = root.querySelector('.mlist');
+  const draw = (focusIdx) => {
+    listEl.innerHTML = memberRowsHtml(list);
+    listEl.querySelectorAll('.mrow').forEach((row, i) => {
+      const m = list[i];
+      const nameInp = row.querySelector('.m-name');
+      nameInp.oninput = () => { m.name = nameInp.value; opts.onChange && opts.onChange(); };
+      nameInp.onkeydown = (e) => {
+        if (e.key !== 'Enter' || e.isComposing) return;
+        e.preventDefault();
+        if (i === list.length - 1) { if (nameInp.value.trim()) addRow(); }
+        else listEl.querySelectorAll('.m-name')[i + 1].focus();
+      };
+      row.querySelectorAll('[data-step]').forEach(b => {
+        b.onclick = () => {
+          m.headcount = Math.max(1, Math.min(99, memberHeadcount(m) + Number(b.getAttribute('data-step'))));
+          row.querySelector('.n').textContent = m.headcount;
+          row.querySelector('[data-step="-1"]').disabled = m.headcount <= 1;
+          opts.onChange && opts.onChange();
+        };
+      });
+      row.querySelector('.m-del').onclick = () => {
+        const label = (m.name || '').trim();
+        if (opts.usedIds && opts.usedIds.has(m.id)) {
+          toast(`「${label}」已出現在支出中，不能刪除`);
+          return;
+        }
+        if (label && !confirm(`確定刪除「${label}」？`)) return;
+        list.splice(i, 1);
+        draw();
+        opts.onChange && opts.onChange();
+      };
+    });
+    if (focusIdx != null) listEl.querySelectorAll('.m-name')[focusIdx]?.focus();
+  };
+  const addRow = () => {
+    list.push({ id: uid(), name: '', headcount: 1 });
+    draw(list.length - 1);
+    opts.onChange && opts.onChange();
+  };
+  root.querySelector('.btn-addrow').onclick = addRow;
+  draw();
+}
+/** Clean names; returns error text or null. */
+function validateMembers(list) {
+  const names = list.map(m => (m.name || '').trim()).filter(Boolean);
+  if (new Set(names).size !== names.length) return '成員名稱不能重複';
+  return null;
+}
+
+function openMemberSheet() {
+  const t = state.trip;
+  const list = (t.members || []).map(m => ({ id: m.id, name: m.name, headcount: memberHeadcount(m) }));
+  const used = new Set();
+  (t.expenses || []).forEach(e => { used.add(e.payerId); (e.shares || []).forEach(x => used.add(x.memberId)); });
+  if (!list.length) list.push({ id: uid(), name: '', headcount: 1 });
+  openModal(`
+    <button class="close" data-close>×</button>
+    <h3>編輯成員</h3>
+    <p class="muted small" style="margin:-6px 0 10px">一列一家（或一人）。人數用在「按人頭」分帳</p>
+    <div id="member-editor"><div class="mlist"></div><button type="button" class="btn-addrow">＋ 新增成員</button></div>
+    <button class="btn block" style="margin-top:14px" id="m-done">完成</button>
+  `, (modal) => {
+    mountMemberEditor(modal.querySelector('#member-editor'), list, { usedIds: used });
+    modal.querySelector('#m-done').onclick = () => {
+      const err = validateMembers(list);
+      if (err) { toast(err); return; }
+      const byId = {};
+      (t.members || []).forEach(m => { byId[m.id] = m; });
+      const next = [];
+      for (const x of list) {
+        const name = (x.name || '').trim();
+        if (!name) {
+          if (used.has(x.id)) { toast('有支出用到的成員不能清空名稱'); return; }
+          continue;
+        }
+        next.push({ ...(byId[x.id] || {}), id: x.id, name, headcount: memberHeadcount(x) });
+      }
+      t.members = next;
+      scheduleSave();
+      closeModal();
+      render();
+      toast('成員已更新');
+    };
+  });
+}
+
 function renderHome() {
   loadLocal();
   const recent = state.recentCodes || [];
-  const chips = homeDraftMembers.map(m =>
-    `<span class="draft-chip">${escapeHtml(m.name)}<span class="hc">${memberHeadcount(m)}人</span><button type="button" data-rm-draft="${m.id}" aria-label="移除">×</button></span>`
-  ).join('');
   return `
   <div class="home-hero">
     <div class="logo">¥$</div>
@@ -882,14 +1002,8 @@ function renderHome() {
         <select id="new-home">${CURRENCIES.map(c => `<option value="${c}" ${c===homeDraftForm.home?'selected':''}>${c}</option>`).join('')}</select>
       </div>
     </div>
-    <label class="field" style="margin-top:12px">同行成員／家庭（可稍後再加）</label>
-    <div class="row" style="gap:8px">
-      <input class="grow" type="text" id="new-member" placeholder="例如：士堯家" maxlength="24">
-      <input type="number" id="new-member-hc" class="hc-input" min="1" step="1" inputmode="numeric" value="1" aria-label="人數" title="人數">
-      <button class="btn secondary" type="button" id="btn-add-draft" style="padding:10px 14px">加入</button>
-    </div>
-    <p class="muted small" style="margin:6px 0 0">右邊填人數（預設 1），記帳選「按人頭」時會用到</p>
-    <div class="draft-chips" id="draft-chips">${chips || '<span class="muted small">尚未加入成員</span>'}</div>
+    <label class="field" style="margin-top:12px">同行成員／家庭（可稍後再加；人數用在「按人頭」）</label>
+    <div id="home-members"><div class="mlist"></div><button type="button" class="btn-addrow" id="btn-add-row">＋ 新增成員</button></div>
     <button class="btn block" style="margin-top:14px" id="btn-create">建立行程並產生邀請碼</button>
   </div>
   <div class="card">
@@ -999,14 +1113,9 @@ function renderTrip() {
       <span class="chip">${t.code}</span>
       <span class="chip amber">${rateStr}</span>
     </div>
-    <div class="row" style="justify-content:space-between;align-items:flex-start">
-      <div>
-        <div class="muted small">成員</div>
-        <div style="margin-top:6px">
-          ${(t.members||[]).map(m => `<span class="member-pill">${escapeHtml(m.name)}<span class="hc">${memberHeadcount(m)}人</span><button data-del-member="${m.id}" aria-label="移除">×</button></span>`).join('') || '<span class="muted">尚未加入成員</span>'}
-        </div>
-      </div>
-      <button class="btn ghost" id="btn-add-member" style="padding:8px 12px;min-height:36px;white-space:nowrap;flex:0 0 auto">＋成員</button>
+    <div class="mhead"><span class="muted">成員 ${(t.members || []).length ? `· ${(t.members || []).length}` : ''}</span><button type="button" class="btn-mini" id="btn-edit-members">編輯成員</button></div>
+    <div class="mchips">
+      ${(t.members||[]).map(m => `<span class="mchip">${escapeHtml(m.name)}${memberHeadcount(m) > 1 ? `<span class="n">·${memberHeadcount(m)}</span>` : ''}</span>`).join('') || '<span class="muted small">尚未加入成員</span>'}
     </div>
     <div class="totals">
       <div class="t"><div class="n">${money(roundMoney(totalHomeApprox, t.homeCurrency), t.homeCurrency)}</div><div class="l">支出合計（${t.homeCurrency}）</div></div>
@@ -1403,36 +1512,16 @@ function render() {
 
 function bind() {
   if (state.view === 'home') {
-    const addDraft = () => {
-      const inp = $('#new-member');
-      const name = (inp?.value || '').trim();
-      if (!name) { toast('請輸入暱稱'); return; }
-      if (homeDraftMembers.some(m => m.name === name)) { toast('已有同名成員'); return; }
-      const hcInp = $('#new-member-hc');
-      const hc = Math.max(1, Math.floor(Number(hcInp?.value) || 1));
-      homeDraftMembers.push({ id: uid(), name, headcount: hc });
-      if (inp) inp.value = '';
-      keepHomeForm();
-      render();
-      $('#new-member')?.focus();
-    };
-    $('#btn-add-draft')?.addEventListener('click', addDraft);
-    $('#new-member')?.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); addDraft(); }
-    });
-    document.querySelectorAll('[data-rm-draft]').forEach(b => {
-      b.addEventListener('click', () => {
-        const id = b.getAttribute('data-rm-draft');
-        homeDraftMembers = homeDraftMembers.filter(m => m.id !== id);
-        keepHomeForm();
-        render();
-      });
-    });
+    if (!homeDraftMembers.length) homeDraftMembers.push({ id: uid(), name: '', headcount: 1 });
+    mountMemberEditor($('#home-members'), homeDraftMembers);
     $('#btn-create')?.addEventListener('click', async () => {
       const name = $('#new-name').value.trim() || '新行程';
       const home = $('#new-home').value;
       const local = $('#new-local').value;
-      const members = homeDraftMembers.map(m => ({ id: m.id, name: m.name, headcount: memberHeadcount(m) }));
+      const err = validateMembers(homeDraftMembers);
+      if (err) { toast(err); return; }
+      const members = homeDraftMembers.filter(m => (m.name || '').trim())
+        .map(m => ({ id: m.id, name: m.name.trim(), headcount: memberHeadcount(m) }));
       try { await createTrip(name, home, local, members); }
       catch (e) { toast('建立失敗'); console.error(e); }
     });
@@ -1506,42 +1595,7 @@ function bind() {
     });
   });
   $('#btn-settings')?.addEventListener('click', openSettings);
-  $('#btn-add-member')?.addEventListener('click', () => {
-    openModal(`
-      <button class="close" data-close>×</button>
-      <h3>新增成員／家庭</h3>
-      <label class="field">名稱</label>
-      <input type="text" id="m-name" placeholder="例如：士堯家" maxlength="24">
-      <label class="field" style="margin-top:10px">人數（按人頭分帳用）</label>
-      <input type="number" id="m-hc" min="1" step="1" inputmode="numeric" value="1">
-      <button class="btn block" style="margin-top:14px" id="m-save">加入</button>
-    `, (modal) => {
-      const inp = modal.querySelector('#m-name');
-      inp.focus();
-      modal.querySelector('#m-save').onclick = () => {
-        const name = inp.value.trim();
-        if (!name) { toast('請輸入名稱'); return; }
-        if (state.trip.members.some(m => m.name === name)) { toast('已有同名成員'); return; }
-        const hc = Math.max(1, Math.floor(Number(modal.querySelector('#m-hc').value) || 1));
-        state.trip.members.push({ id: uid(), name, headcount: hc });
-        scheduleSave();
-        closeModal();
-        render();
-      };
-    });
-  });
-  document.querySelectorAll('[data-del-member]').forEach(b => {
-    b.addEventListener('click', () => {
-      const id = b.getAttribute('data-del-member');
-      if ((state.trip.expenses || []).some(e => e.payerId === id || (e.shares||[]).some(s => s.memberId === id))) {
-        toast('此成員已出現在支出中，無法刪除');
-        return;
-      }
-      state.trip.members = state.trip.members.filter(m => m.id !== id);
-      scheduleSave();
-      render();
-    });
-  });
+  $('#btn-edit-members')?.addEventListener('click', openMemberSheet);
   document.querySelectorAll('[data-date-tab]').forEach(b => {
     b.addEventListener('click', () => {
       state.expenseDateFilter = b.getAttribute('data-date-tab') || 'all';
@@ -1562,7 +1616,7 @@ function bind() {
     });
   });
   $('#btn-settle')?.addEventListener('click', () => {
-    if (!(state.trip.members || []).length) { toast('請先新增成員'); return; }
+    if (!(state.trip.members || []).length) { toast('請先按「編輯成員」新增成員'); return; }
     if (!(state.trip.expenses || []).length) { toast('尚無支出可結算'); return; }
     const missing = needsRateCount(state.trip);
     if (missing) {
@@ -1592,14 +1646,7 @@ function openSettings() {
         <select id="s-home">${CURRENCIES.map(c => `<option value="${c}" ${c===t.homeCurrency?'selected':''}>${c}</option>`).join('')}</select>
       </div>
     </div>
-    <label class="field" style="margin-top:12px">成員／家庭與人數</label>
-    <div class="check-grid" id="s-members">
-      ${(t.members || []).map(m => `<div class="member-edit" data-mid="${m.id}">
-        <input type="text" class="grow s-mname" maxlength="24" value="${escapeHtml(m.name)}">
-        <input type="number" class="hc-input s-mhc" min="1" step="1" inputmode="numeric" value="${memberHeadcount(m)}" aria-label="人數">
-        <span class="muted small">人</span>
-      </div>`).join('') || '<span class="muted small">尚未加入成員</span>'}
-    </div>
+    <div class="mhead" style="margin-top:12px"><span class="muted">成員／家庭與人數</span><button type="button" class="btn-mini" id="s-edit-members">編輯成員</button></div>
     <label class="field" style="margin-top:10px">預設匯率（1 當地幣 = ? 回家幣；每筆會自動抓台銀現金賣出，抓不到才用這個）</label>
     <div class="row">
       <input class="grow" type="number" id="s-rate" step="any" min="0" value="${t.rate != null ? t.rate : ''}" placeholder="自動或手動">
@@ -1611,6 +1658,7 @@ function openSettings() {
     </label>
     <button class="btn block" style="margin-top:14px" id="s-save">儲存</button>
   `, (modal) => {
+    modal.querySelector('#s-edit-members').onclick = () => { closeModal(); openMemberSheet(); };
     modal.querySelector('#s-fetch').onclick = async () => {
       t.rateManual = false;
       modal.querySelector('#s-manual').checked = false;
@@ -1620,18 +1668,6 @@ function openSettings() {
       render();
     };
     modal.querySelector('#s-save').onclick = () => {
-      const edits = [...modal.querySelectorAll('.member-edit')].map(row => ({
-        id: row.getAttribute('data-mid'),
-        name: row.querySelector('.s-mname').value.trim(),
-        headcount: Math.max(1, Math.floor(Number(row.querySelector('.s-mhc').value) || 1)),
-      }));
-      const names = edits.map(x => x.name);
-      if (names.some(n => !n)) { toast('成員名稱不能空白'); return; }
-      if (new Set(names).size !== names.length) { toast('成員名稱不能重複'); return; }
-      edits.forEach(x => {
-        const m = t.members.find(mm => mm.id === x.id);
-        if (m) { m.name = x.name; m.headcount = x.headcount; }
-      });
       t.name = modal.querySelector('#s-name').value.trim() || t.name;
       t.localCurrency = modal.querySelector('#s-local').value;
       t.homeCurrency = modal.querySelector('#s-home').value;
@@ -1703,7 +1739,7 @@ async function refreshProvisionalRates() {
 
 function openExpenseModal(editId) {
   const t = state.trip;
-  if (!(t.members || []).length) { toast('請先新增成員'); return; }
+  if (!(t.members || []).length) { toast('請先按「編輯成員」新增成員'); return; }
   const exp = editId ? t.expenses.find(e => e.id === editId) : null;
   const home = t.homeCurrency;
   const defaultCurrency = exp?.currency || t.localCurrency;
