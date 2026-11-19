@@ -212,6 +212,7 @@ function saveTrip(code, data, clientUpdatedAt) {
   if (Array.isArray(data.expenses)) {
     data.expenses = data.expenses.map((e) => ({
       ...e,
+      settled: !!e.settled,
       photoIds: Array.isArray(e.photoIds) ? e.photoIds.slice(0, MAX_PHOTOS_PER_EXPENSE) : [],
     }));
   }
@@ -440,7 +441,7 @@ app.put('/api/trips/:code', (req, res) => {
         const photoIds = Array.isArray(e.photoIds)
           ? e.photoIds
           : (prev && Array.isArray(prev.photoIds) ? prev.photoIds : []);
-        return { ...e, photoIds: photoIds.slice(0, MAX_PHOTOS_PER_EXPENSE) };
+        return { ...e, settled: !!e.settled, photoIds: photoIds.slice(0, MAX_PHOTOS_PER_EXPENSE) };
       })
     : (existing?.expenses || []);
 

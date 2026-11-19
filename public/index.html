@@ -286,6 +286,27 @@ input[readonly]:focus { border-color: var(--line); }
 }
 .totals .t .n { font-weight: 800; font-size: 1.05rem; }
 .totals .t .l { font-size: 0.72rem; color: var(--muted); }
+.totals .t .open-amt { font-size: 0.72rem; font-weight: 700; color: var(--accent); margin-top: 2px; }
+.exp-tools { display: flex; align-items: center; gap: 4px 10px; flex-wrap: wrap; margin-top: 2px; }
+.exp-tools .owed-toggle.sm { margin-top: 0; }
+.settled-tog {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-height: 44px; padding: 0 8px 0 2px;
+  white-space: nowrap; color: var(--muted); font-size: 0.78rem; font-weight: 600;
+}
+.settled-tog .box {
+  width: 22px; height: 22px; flex: 0 0 22px; border-radius: 6px;
+  border: 1.5px solid #99c5bf; background: #fff;
+  display: grid; place-items: center; color: #fff; font-size: 0.72rem; font-weight: 800;
+}
+.settled-tog[aria-pressed="true"] { color: #047857; }
+.settled-tog[aria-pressed="true"] .box { background: #0f766e; border-color: #0f766e; }
+.settle-badge {
+  display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 6px;
+  background: #ecfdf5; color: #047857; font-size: 0.68rem; font-weight: 700;
+  white-space: nowrap; vertical-align: middle;
+}
+.expense.settled .title, .expense.settled .meta, .expense.settled .amt, .expense.settled .conv { opacity: 0.55; }
 .hc { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px; background: #fff7ed; color: #b45309; font-size: 0.72rem; font-weight: 700; vertical-align: middle; }
 .hc.dim { background: #f1f5f9; color: var(--muted); }
 .hc-input { width: 64px !important; flex: 0 0 64px; text-align: center; padding: 10px 6px !important; }
@@ -545,6 +566,29 @@ function expenseRate(exp, trip) {
 /** Unrounded home amount = 原幣金額 × 匯率 (same arithmetic as the Excel formula). */
 function homeAmountOf(exp, trip) {
   return (Number(exp.amount) || 0) * expenseRate(exp, trip);
+}
+
+function isSettled(exp) {
+  return !!(exp && exp.settled);
+}
+
+/** Expenses still open for 結算 (missing settled => false). */
+function openExpenses(trip, items) {
+  return (items || trip.expenses || []).filter(e => !isSettled(e));
+}
+
+function settledStats(trip, items) {
+  const all = items || trip.expenses || [];
+  const settled = all.filter(isSettled);
+  const amount = settled.reduce((s, e) => s + homeAmountOf(e, trip), 0);
+  return { n: settled.length, amount };
+}
+
+function settledExcludeNote(trip, items) {
+  const st = settledStats(trip, items);
+  if (!st.n) return '';
+  const home = trip.homeCurrency;
+  return `已排除 ${st.n} 筆已結清（${money(roundMoney(st.amount, home), home)}）`;
 }
 
 /** Kept for older call sites: converts with the trip default rate. */
@@ -938,7 +982,7 @@ async function copyText(text) {
 /* ========== Settlement ========== */
 function computeBalances(trip) {
   const home = trip.homeCurrency;
-  const tot = memberTotals(trip);
+  const tot = memberTotals(trip, openExpenses(trip));
   const bal = {};
   Object.entries(tot).forEach(([id, r]) => { bal[id] = roundMoney(r.balance, home); });
   return bal;
@@ -947,7 +991,7 @@ function computeBalances(trip) {
 /** Transfers rounded to whole units (NT$) — matches the Excel 結算 sheet. */
 function settleWhole(trip) {
   const home = trip.homeCurrency;
-  const tot = memberTotals(trip);
+  const tot = memberTotals(trip, openExpenses(trip));
   const ms = trip.members || [];
   if (ms.length === 2) {
     const b = roundHalfAway(tot[ms[0].id]?.balance || 0);
@@ -1184,7 +1228,7 @@ function renderCreated() {
 
 function renderSummaryTable(t, opts = {}) {
   const home = t.homeCurrency;
-  const tot = memberTotals(t);
+  const tot = memberTotals(t, openExpenses(t));
   let sp = 0, so = 0;
   const rows = (t.members || []).map(m => {
     const r = tot[m.id] || { paid: 0, owed: 0, balance: 0 };
@@ -1205,7 +1249,8 @@ function renderSummaryTable(t, opts = {}) {
     <tbody>${rows}</tbody>
     <tfoot><tr><td>合計</td><td>${fmtNum(sp, home)}</td><td>${fmtNum(so, home)}</td><td class="chk ${ok ? 'pos' : 'neg'}">${ok ? '✔ 相符' : '✘ 不符'}</td></tr></tfoot>
   </table>
-  ${opts.note === false ? '' : `<p class="muted small" style="margin:6px 0 0">單位 ${home}。已付＝自己付掉的錢；應分＝該負擔的錢；差額＝已付－應分</p>`}`;
+  ${opts.note === false ? '' : `<p class="muted small" style="margin:6px 0 0">單位 ${home}。已付＝自己付掉的錢；應分＝該負擔的錢；差額＝已付－應分</p>`}
+  ${settledExcludeNote(t) ? `<p class="muted small" style="margin:6px 0 0">${escapeHtml(settledExcludeNote(t))}</p>` : ''}`;
 }
 
 function fmtNum(n, cur) {
@@ -1249,7 +1294,7 @@ function renderTrip() {
       ${(t.members||[]).map(m => `<span class="mchip">${escapeHtml(m.name)}${memberHeadcount(m) > 1 ? `<span class="n">·${memberHeadcount(m)}</span>` : ''}</span>`).join('') || '<span class="muted small">尚未加入成員</span>'}
     </div>
     <div class="totals">
-      <div class="t"><div class="n">${money(roundMoney(totalHomeApprox, t.homeCurrency), t.homeCurrency)}</div><div class="l">支出合計（${t.homeCurrency}）</div></div>
+      <div class="t"><div class="n">${money(roundMoney(totalHomeApprox, t.homeCurrency), t.homeCurrency)}</div><div class="l">支出合計（${t.homeCurrency}）${settledStats(t).n ? `<div class="open-amt">未結清 ${money(roundMoney(openExpenses(t).reduce((s, e) => s + homeAmountOf(e, t), 0), t.homeCurrency), t.homeCurrency)}</div>` : ''}</div></div>
       <div class="t"><div class="n">${(t.expenses||[]).length}</div><div class="l">筆支出 · ${Object.keys(totals).map(c=>c).join('/')||'—'}</div></div>
     </div>
     ${(t.expenses || []).length && (t.members || []).length ? `<div style="margin-top:10px">
@@ -1288,7 +1333,7 @@ function renderTrip() {
       const groups = showDays.map(day => {
         const items = byDate[day].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
         const dayHome = items.reduce((s, e) => s + homeAmountOf(e, t), 0);
-        const personLines = dayPersonSpend(items, t);
+        const personLines = dayPersonSpend(openExpenses(t, items), t);
         const detail = active !== 'all' && state.owedOpen
           ? `<div class="day-person">${personLines.map(l => `<div>${l}</div>`).join('') || '<div>尚無分攤</div>'}</div>`
           : '';
@@ -1296,11 +1341,16 @@ function renderTrip() {
           const thumbs = (e.photoIds||[]).map(pid =>
             `<img class="thumb" src="/api/trips/${t.code}/photos/${pid}" alt="收據" data-photo-view="${pid}" loading="lazy">`
           ).join('');
-          return `<div class="expense" data-exp="${e.id}">
+          return `<div class="expense${isSettled(e) ? ' settled' : ''}" data-exp="${e.id}">
             <div>
-              <div class="title">${escapeHtml(expenseTitle(e))}</div>
+              <div class="title">${escapeHtml(expenseTitle(e))}${isSettled(e) ? '<span class="settle-badge">已結清</span>' : ''}</div>
               <div class="meta">${escapeHtml(memberName(e.payerId))} 付 · ${escapeHtml(splitBrief(e))}</div>
-              <button type="button" class="owed-toggle sm" data-owed-exp="${e.id}" aria-expanded="${!!state.owedExp[e.id]}">各家應付 ${state.owedExp[e.id] ? '▾' : '▸'}</button>
+              <div class="exp-tools">
+                <button type="button" class="owed-toggle sm" data-owed-exp="${e.id}" aria-expanded="${!!state.owedExp[e.id]}">各家應付 ${state.owedExp[e.id] ? '▾' : '▸'}</button>
+                <button type="button" class="settled-tog" data-settle-exp="${e.id}" aria-pressed="${isSettled(e) ? 'true' : 'false'}" aria-label="已結清">
+                  <span class="box" aria-hidden="true">${isSettled(e) ? '✔' : ''}</span><span>已結清</span>
+                </button>
+              </div>
               ${e.note ? `<div class="meta">📝 ${escapeHtml(e.note)}</div>` : ''}
               ${thumbs ? `<div class="thumb-row">${thumbs}</div>` : ''}
             </div>
@@ -1333,14 +1383,16 @@ function renderTrip() {
 function renderSettle() {
   const t = state.trip;
   const home = t.homeCurrency;
-  const tot = memberTotals(t);
+  const tot = memberTotals(t, openExpenses(t));
   const transfers = settleWhole(t);
   const exps = t.expenses || [];
   const totalHome = exps.reduce((a, e) => a + homeAmountOf(e, t), 0);
+  const exNote = settledExcludeNote(t);
   const prov = exps.filter(e => e.currency !== home && e.rateProvisional && !e.rateManual).length;
   const lines = [];
   lines.push(`【${t.name}】結算總表（${home}）`);
   lines.push(`共 ${exps.length} 筆，合計 ${money(roundMoney(totalHome, home), home)}`);
+  if (exNote) lines.push(exNote);
   if (t.localCurrency !== home) lines.push('匯率：每筆用消費日台灣銀行現金賣出價');
   lines.push('— 每家已付／應分／差額 —');
   (t.members || []).forEach(m => {
@@ -1440,11 +1492,12 @@ async function buildXlsx(t) {
   const nShare = members.length;
   const firstShareCol = 8;
   const lastShareCol = firstShareCol + nShare - 1;
-  const noteCol = lastShareCol + 1;
+  const settledCol = lastShareCol + 1;
+  const noteCol = lastShareCol + 2;
   const L = colLetter;
-  const headers = ['日期', '項目', '原幣金額', '幣別', '匯率', `${homeLbl}金額`, '誰付', ...members.map(m => `${m.name}應分`), '備註'];
+  const headers = ['日期', '項目', '原幣金額', '幣別', '匯率', `${homeLbl}金額`, '誰付', ...members.map(m => `${m.name}應分`), '已結清', '備註'];
   ws.addRow(headers);
-  const widths = [12, 20, 12, 7, 10, 13, 12, ...members.map(m => Math.max(12, m.name.length * 2 + 6)), 36];
+  const widths = [12, 20, 12, 7, 10, 13, 12, ...members.map(m => Math.max(12, m.name.length * 2 + 6)), 10, 36];
   widths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
   const head = ws.getRow(1);
   head.height = 22;
@@ -1468,6 +1521,7 @@ async function buildXlsx(t) {
       { formula: `C${r}*E${r}`, result: amt * rate },
       memberName(e.payerId),
       ...members.map(m => sh[m.id] || 0),
+      isSettled(e) ? '✔' : '',
       expenseNote(e, t),
     ]);
     row.getCell(1).numFmt = 'yyyy/mm/dd';
@@ -1475,6 +1529,7 @@ async function buildXlsx(t) {
     row.getCell(5).numFmt = '0.0000';
     row.getCell(6).numFmt = '#,##0.00';
     for (let c = firstShareCol; c <= lastShareCol; c++) row.getCell(c).numFmt = '#,##0.00';
+    row.getCell(settledCol).alignment = { horizontal: 'center' };
     row.getCell(noteCol).alignment = { wrapText: true, vertical: 'top' };
   });
   const lastData = exps.length + 1;
@@ -1483,10 +1538,11 @@ async function buildXlsx(t) {
   totRow.getCell(2).value = '合計';
   const sumF = exps.reduce((a, e) => a + homeAmountOf(e, t), 0);
   totRow.getCell(6).value = { formula: `SUM(F2:F${lastData})`, result: sumF };
-  const owedTot = memberTotals(t);
+  const owedTotAll = memberTotals(t);
+  const owedTot = memberTotals(t, openExpenses(t));
   members.forEach((m, k) => {
     const c = firstShareCol + k;
-    totRow.getCell(c).value = { formula: `SUM(${L(c)}2:${L(c)}${lastData})`, result: owedTot[m.id]?.owed || 0 };
+    totRow.getCell(c).value = { formula: `SUM(${L(c)}2:${L(c)}${lastData})`, result: owedTotAll[m.id]?.owed || 0 };
   });
   totRow.eachCell({ includeEmpty: true }, (c, col) => {
     if (col > noteCol) return;
@@ -1523,6 +1579,7 @@ async function buildXlsx(t) {
   });
   ss.getRow(1).height = 30;
   const D = `'明細'!`;
+  const Ls = L(settledCol);
   members.forEach((m, k) => {
     const r = k + 2;
     const c = L(firstShareCol + k);
@@ -1530,8 +1587,8 @@ async function buildXlsx(t) {
     const row = ss.addRow([
       m.name,
       memberHeadcount(m),
-      { formula: `SUMIF(${D}$G$2:$G$${lastData},A${r},${D}$F$2:$F$${lastData})`, result: mt.paid },
-      { formula: `SUM(${D}${c}$2:${c}$${lastData})`, result: mt.owed },
+      { formula: `SUMIFS(${D}$F$2:$F$${lastData},${D}$G$2:$G$${lastData},A${r},${D}$${Ls}$2:$${Ls}$${lastData},"")`, result: mt.paid },
+      { formula: `SUMIFS(${D}${c}$2:${c}$${lastData},${D}$${Ls}$2:$${Ls}$${lastData},"")`, result: mt.owed },
       { formula: `C${r}-D${r}`, result: mt.paid - mt.owed },
     ]);
     [3, 4, 5].forEach(ci => { row.getCell(ci).numFmt = '#,##0.00;[Red]-#,##0.00'; });
@@ -1585,8 +1642,8 @@ async function buildXlsx(t) {
     ss.getRow(r).height = 24;
   }
   const noteRow = ss.addRow(['', members.length > 2
-    ? '金額四捨五入到元；多於兩家時依 App 的最少轉帳演算法列出。'
-    : '金額依 E2 差額四捨五入到元。']);
+    ? '金額四捨五入到元；多於兩家時依 App 的最少轉帳演算法列出。已結清列不列入結算（已結清欄為空白才加總）。'
+    : '金額依 E2 差額四捨五入到元。已結清列不列入結算（已結清欄為空白才加總）。']);
   noteRow.getCell(2).font = { italic: true, color: { argb: 'FF5B7C78' } };
   ss.mergeCells(`B${noteRow.number}:E${noteRow.number}`);
 
@@ -1743,6 +1800,19 @@ function bind() {
   const keepScroll = (fn) => { const y = window.scrollY; fn(); render(); window.scrollTo(0, y); };
   document.querySelectorAll('[data-owed-toggle]').forEach(b => {
     b.addEventListener('click', () => keepScroll(() => { state.owedOpen = !state.owedOpen; }));
+  });
+  document.querySelectorAll('[data-settle-exp]').forEach(b => {
+    b.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      keepScroll(() => {
+        const id = b.getAttribute('data-settle-exp');
+        const e = (state.trip.expenses || []).find(x => x.id === id);
+        if (!e) return;
+        e.settled = !e.settled;
+        e.updatedAt = Date.now();
+        scheduleSave();
+      });
+    });
   });
   document.querySelectorAll('[data-owed-exp]').forEach(b => {
     b.addEventListener('click', () => keepScroll(() => {
@@ -1944,6 +2014,10 @@ function openExpenseModal(editId) {
     <div class="exp-owed hidden" id="e-owed" style="margin:6px 0 0"></div>
     <label class="field" style="margin-top:10px">備註（可空白）</label>
     <input type="text" id="e-note" maxlength="120" placeholder="例如：含小費" value="${escapeHtml(exp?.note || '')}">
+    <button type="button" class="settled-tog" id="e-settled" aria-pressed="${exp && exp.settled ? 'true' : 'false'}" style="margin-top:8px">
+      <span class="box" aria-hidden="true">${exp && exp.settled ? '✔' : ''}</span><span>已結清</span>
+    </button>
+    <p class="muted small" style="margin:0 0 4px">勾選後這筆不會列入最後結算，可再取消</p>
     <div class="photo-editor">
       <label class="field">收據照片（最多 3 張）</label>
       <div class="grid" id="e-photos"></div>
@@ -2021,6 +2095,15 @@ function openExpenseModal(editId) {
       renderPhotoGrid();
     };
     renderPhotoGrid();
+    const settledBtn = modal.querySelector('#e-settled');
+    if (settledBtn) {
+      settledBtn.onclick = () => {
+        const on = settledBtn.getAttribute('aria-pressed') === 'true';
+        settledBtn.setAttribute('aria-pressed', on ? 'false' : 'true');
+        const box = settledBtn.querySelector('.box');
+        if (box) box.textContent = on ? '' : '✔';
+      };
+    }
     const amountInput = modal.querySelector('#e-amount');
     const amountLabel = modal.querySelector('#e-amount-label');
     const curSel = modal.querySelector('#e-cur');
@@ -2207,6 +2290,7 @@ function openExpenseModal(editId) {
         rateDate: currency === home ? dateVal : (rateSt && rateSt.rateDate) || null,
         rateSource: currency === home ? 'identity' : (rateSt && rateSt.manual ? 'manual' : (rateSt && rateSt.source) || null),
         note: modal.querySelector('#e-note').value.trim(),
+        settled: modal.querySelector('#e-settled')?.getAttribute('aria-pressed') === 'true',
         updatedAt: Date.now(),
         createdAt: exp?.createdAt || Date.now(),
       };

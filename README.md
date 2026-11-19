@@ -6,7 +6,8 @@ Mobile web trip bill splitting app (Traditional Chinese UI).
 - Node + SQLite + SSE realtime sync (no login; join by share code/link)
 - Dual currency; each expense stores its own rate (Bank of Taiwan cash selling for the expense date via `/api/bot-rate`, editable)
 - Split modes: 均分 / 按人頭 (member headcount) / 自訂金額 / 自訂比例
-- 結算總表 + client-side .xlsx export (ExcelJS served at `/vendor/exceljs.min.js`): 明細 with =C*E formulas and red-row check, 結算 with SUMIF/SUM and transfer sentence
+- 結算總表 + client-side .xlsx export (ExcelJS served at `/vendor/exceljs.min.js`): 明細 with =C*E formulas and red-row check, 結算 with SUMIFS (excluding 已結清) and transfer sentence
+- An expense can be marked 「已結清」 (already settled between families); it stays in the list and 支出合計 / date subtotals, but is excluded from 結算 and the trip-level 「各家應付」 table. The xlsx 明細 keeps every row plus a 「已結清」 column (✔ or blank); 結算 totals use SUMIFS on a blank 已結清 cell.
 - localStorage offline cache
 
 ## Run locally
@@ -32,3 +33,4 @@ Render free web service (Node). Build: `npm install`. Start: `npm start`.
 - 記一筆: amount, currency and rate sit on ONE row (金額 | 幣別 | × 匯率). The rate chip is hidden for the home currency; tapping it edits (manual), clearing it returns to the Bank of Taiwan rate.
 - Number fields are `type=text inputmode=decimal` (never type=number) and ≥16px; inputs must never sit inside a `<label>` with other controls; don't size inputs via generic `.check-item input` rules (it squashed per-person amount fields to 18px).
 - Test in WebKit with devices['iPhone 13'] and tap(), not click().
+- 「已結清」 is a nowrap toggle (min 44px tap target, not destructive); no confirm, easy to undo. Settled rows are muted with a small 「已結清」 badge. The toggle is also in the edit sheet.
